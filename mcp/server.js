@@ -229,6 +229,37 @@ async function getActivityEvents({ device_id = "", date = "", source = "", limit
   return await res.json();
 }
 
+// SOL_WORKFLOW_RULES_V1 — insert helper functions near getActivityEvents().
+async function listWorkflows(enabledOnly = false) {
+  const q = new URLSearchParams();
+  if (enabledOnly) q.set("enabled_only", "true");
+  const res = await linjianFetch(`/api/workflows?${q.toString()}`);
+  return await res.json();
+}
+
+async function getWorkflowRuns({ limit = 50, rule_id = "" } = {}) {
+  const q = new URLSearchParams({ limit: String(limit) });
+  if (rule_id) q.set("rule_id", rule_id);
+  const res = await linjianFetch(`/api/workflows/runs?${q.toString()}`);
+  return await res.json();
+}
+
+async function getWorkflowInbox({ limit = 50, status = "pending", kind = "" } = {}) {
+  const q = new URLSearchParams({ limit: String(limit), status });
+  if (kind) q.set("kind", kind);
+  const res = await linjianFetch(`/api/workflows/inbox?${q.toString()}`);
+  return await res.json();
+}
+
+async function workflowPost(pathname, body = {}) {
+  const res = await linjianFetch(pathname, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  });
+  return await res.json();
+}
+
 async function updateWindowWhisper(content, author = "陪伴对象") {
   const res = await linjianFetch("/api/companion/whisper", {
     method: "POST",
@@ -1017,20 +1048,20 @@ function registerWalletTakeoutTools(server, { includeUnified = false } = {}) {
 }
 
 function makeWalletTakeoutServer() {
-  const server = new McpServer({ name: "掌心窗小金库外卖", version: "0.3.9.0" });
+  const server = new McpServer({ name: "掌心窗小金库外卖", version: "0.3.10" });
   server.tool("linjian_status", "检查掌心窗后端、MCP 配置，以及当前是否使用小金库/外卖专用 schema。", {}, async () => {
     const configErrors = [];
     if (!LINJIAN_URL_CANDIDATES.length) configErrors.push("Missing env LINJIAN_URL");
     if (!LINJIAN_TOKEN) configErrors.push("Missing env LINJIAN_TOKEN");
     const health = configErrors.length ? { ok: false, error: configErrors.join("; ") } : await linjianFetch("/health").then((r) => r.json()).catch((e) => ({ ok: false, error: String(e) }));
-    return textResult({ ok: true, schema_mode: "wallet_takeout_only", version: "0.3.9.0", has_url: Boolean(LINJIAN_URL_CANDIDATES.length), has_token: Boolean(LINJIAN_TOKEN), linjian_url: effectiveLinjianUrl(), health, tools: Array.from(WALLET_TAKEOUT_ACTIONS), note: "如果普通 /mcp 里新增工具没有暴露，请让 AI 客户端连接 /mcp-wallet。" });
+    return textResult({ ok: true, schema_mode: "wallet_takeout_only", version: "0.3.10", has_url: Boolean(LINJIAN_URL_CANDIDATES.length), has_token: Boolean(LINJIAN_TOKEN), linjian_url: effectiveLinjianUrl(), health, tools: Array.from(WALLET_TAKEOUT_ACTIONS), note: "如果普通 /mcp 里新增工具没有暴露，请让 AI 客户端连接 /mcp-wallet。" });
   });
   registerWalletTakeoutTools(server, { includeUnified: true });
   return server;
 }
 
 function makeServer() {
-  const server = new McpServer({ name: "掌心窗", version: "0.3.9.0" });
+  const server = new McpServer({ name: "掌心窗", version: "0.3.10" });
   const commandBackedTools = new Set([
     "peek_screen", "get_screen_nodes", "tap_text", "input_text", "draft_xhs_comment", "xhs_comment", "send_visible_comment_after_confirmation",
     "add_guardian_calendar_event", "care_action", "trigger_guidian", "mark_guidian_returned",
@@ -1615,6 +1646,61 @@ function makeServer() {
   });
 
 
+
+  // SOL_WORKFLOW_RULES_V1 — event-driven automation/rules tools.
+  server.tool("list_workflows", "读取掌心窗事件驱动 Workflow/Rules。用于查看当前有哪些自动化规则、触发事件、条件、动作和冷却时间；这不是定时任务。", {
+    enabled_only: z.boolean().default(false)
+  }, async ({ enabled_only = false }) => textResult(await listWorkflows(enabled_only)));
+
+  server.tool("get_workflow_runs", "读取最近的 Workflow 运行记录。用于判断某条规则为什么触发、为什么因冷却/条件而跳过，以及每一步动作是否成功。", {
+    limit: z.number().int().min(1).max(500).default(50),
+    rule_id: z.string().max(80).default("")
+  }, async ({ limit = 50, rule_id = "" }) => textResult(await getWorkflowRuns({ limit, rule_id })));
+
+  server.tool("get_workflow_inbox", "读取 Workflow 给 Sol/陪伴对象留下的事件收件箱。这里放需要模型判断的事情，例如新页边纸条、刷手机后是否进一步管束；不会把所有事情都硬编码成本地 if。", {
+    limit: z.number().int().min(1).max(500).default(50),
+    status: z.enum(["pending", "done", "dismissed", "all"]).default("pending"),
+    kind: z.string().max(80).default("")
+  }, async ({ limit = 50, status = "pending", kind = "" }) => textResult(await getWorkflowInbox({ limit, status, kind })));
+
+  server.tool("emit_workflow_event", "向掌心窗规则引擎投递一个语义事件，而不是创建定时任务。适合当前聊天明确出现事件时调用，例如 chat.intent.leave_for_study、app.overuse.detected、diary.annotation.created。高影响手机动作只有事件明确带 explicit_consent=true 时才允许执行。", {
+    event_name: z.string().min(1).max(120),
+    payload_json: z.string().default("{}").describe("事件 JSON 对象，例如 {\"destination\":\"library\"}。"),
+    explicit_consent: z.boolean().default(false).describe("用户是否在当前语境明确授权本事件执行高影响动作，例如锁 App/开启全机专注。"),
+    source: z.string().max(40).default("mcp"),
+    event_id: z.string().max(120).default(""),
+    device_id: z.string().default(DEFAULT_DEVICE)
+  }, async ({ event_name, payload_json = "{}", explicit_consent = false, source = "mcp", event_id = "", device_id = DEFAULT_DEVICE }) => {
+    let payload = {};
+    try { payload = payload_json ? JSON.parse(payload_json) : {}; }
+    catch (e) { return textResult({ ok: false, error: "payload_json_invalid", detail: String(e) }, true); }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) payload = { value: payload };
+    // Consent must come from the dedicated, explicit tool argument. Do not let
+    // caller-supplied payload_json smuggle the authorization bit through.
+    delete payload.explicit_consent;
+    payload.explicit_consent = explicit_consent === true;
+    return textResult(await workflowPost("/api/workflows/emit", { event_name, payload, source, event_id, device_id }));
+  });
+
+  server.tool("upsert_workflow", "新建或完整替换一条 Workflow 规则。规则以 JSON 保存到掌心窗 server 数据目录；同 id 会更新，不同 id 会新增。建议先 list_workflows，再修改，避免重复规则。", {
+    rule_json: z.string().min(2).max(20000)
+  }, async ({ rule_json }) => {
+    let rule;
+    try { rule = JSON.parse(rule_json); }
+    catch (e) { return textResult({ ok: false, error: "rule_json_invalid", detail: String(e) }, true); }
+    return textResult(await workflowPost("/api/workflows/upsert", { rule }));
+  });
+
+  server.tool("set_workflow_enabled", "启用或暂停一条 Workflow 规则，不删除规则内容。", {
+    rule_id: z.string().min(1).max(80),
+    enabled: z.boolean()
+  }, async ({ rule_id, enabled }) => textResult(await workflowPost("/api/workflows/enable", { rule_id, enabled })));
+
+  server.tool("ack_workflow_inbox", "处理完 Workflow 收件箱事件后标记为 done 或 dismissed，避免反复处理同一件事。", {
+    item_id: z.string().min(1).max(120),
+    status: z.enum(["done", "dismissed"]).default("done"),
+    note: z.string().max(500).default("")
+  }, async ({ item_id, status = "done", note = "" }) => textResult(await workflowPost("/api/workflows/inbox/ack", { item_id, status, note })));
 
   server.tool("get_guidian_state", "读取掌心窗『归电』状态：上次回来、下次最早归电、今日次数、拒绝理由、主题和设置。用于陪伴对象判断是否该主动把用户叫回来，不会截图。当用户提到归电没弹、归电出问题、拒绝理由、今天回来节奏或叫回设置时主动调用。", { device_id: z.string().default(DEFAULT_DEVICE) }, async ({ device_id = DEFAULT_DEVICE }) => {
     const res = await linjianFetch(`/api/guidian_state?device_id=${encodeURIComponent(device_id)}`);
@@ -2211,7 +2297,7 @@ app.get("/", (_req, res) => res.type("text/plain").send("掌心窗 unified MCP i
 app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "linjian-public-mcp",
-  version: "0.3.9.0",
+  version: "0.3.10",
   has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
   has_token: Boolean(LINJIAN_TOKEN),
   configured_linjian_url: RAW_LINJIAN_URL || "",
@@ -2225,6 +2311,8 @@ app.get("/health", (_req, res) => res.json({
   diary_annotation_tools: true,
   diary_annotation_ui: "margin_notes",
   focus_tools: true,
+  workflow_rules: true,
+  workflow_version: "1.0",
   focus_tool_names: ["get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock"],
   mcp_wallet_endpoint: "/mcp-wallet",
   schema_exposure_fix: true,

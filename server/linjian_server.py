@@ -23,10 +23,13 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
+# SOL_WORKFLOW_RULES_V1
+from workflow_engine import WorkflowEngine, WORKFLOW_VERSION
+
 DEFAULT_PORT = 8513
 DEFAULT_KEEP = 3
 MAX_UPLOAD_BYTES = 24 * 1024 * 1024
-VERSION = "0.3.9.0"
+VERSION = "0.3.10"
 DEFAULT_DEVICE = os.environ.get("LINJIAN_DEFAULT_DEVICE", "android-phone")
 ACTIVITY_EVENT_LIMIT = 500
 
@@ -229,6 +232,54 @@ class State:
         self.activity_path = self.data_dir / "activity_events.json"
         self.activity_lock = Lock()
         self.activity_events = self._load_activity_events()
+        # SOL_WORKFLOW_RULES_V1: durable event-driven rules live beside activity state.
+        self.workflow_engine = WorkflowEngine(
+            self.data_dir,
+            phone_command=self._workflow_phone_command,
+            activity_event=self._workflow_activity_event,
+        )
+
+    # SOL_WORKFLOW_RULES_V1
+    def queue_command(self, cmd: dict) -> bool:
+        """Queue a phone command from HTTP or Workflow Engine with one dedupe path."""
+        with self.commands_lock:
+            if cmd.get("action") == "peek" and sum(1 for c in self.commands if c.get("action") == "peek") >= 3:
+                return False
+            self.commands.append(cmd)
+            if cmd.get("id"):
+                self.command_history[cmd.get("id")] = dict(cmd)
+        return True
+
+    def _workflow_phone_command(self, request: dict) -> dict:
+        payload = dict(request.get("payload") or {})
+        cmd = make_command(
+            request.get("device_id") or DEFAULT_DEVICE,
+            request.get("action") or "noop",
+            request.get("app") or "",
+            request.get("package") or "",
+            payload,
+        )
+        event = self.add_activity_event({
+            "id": cmd.get("id"),
+            "device_id": cmd.get("device_id") or DEFAULT_DEVICE,
+            "source": "workflow",
+            "type": activity_type_for_action(cmd.get("action")),
+            "title": "Workflow：" + (cmd.get("action") or "command"),
+            "subtitle": cmd.get("app") or "",
+            "app_name": cmd.get("app") or "",
+            "package_name": cmd.get("package") or "",
+            "action": cmd.get("action") or "",
+            "status": "pending",
+            "metadata_json": {"command_id": cmd.get("id"), "workflow": True},
+        })
+        cmd["activity_event_id"] = event.get("id")
+        queued = self.queue_command(cmd)
+        return {"ok": queued, "queued": queued, "command": cmd}
+
+    def _workflow_activity_event(self, event: dict) -> dict:
+        data = dict(event or {})
+        data.setdefault("source", "workflow")
+        return self.add_activity_event(data, max(0, min(300, int(data.get("dedupe_seconds") or 0))))
 
     def _load_activity_events(self) -> list[dict]:
         try:
@@ -449,7 +500,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = parse_qs(parsed.query)
         if path in ("/", "/health"):
-            self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "tools": sorted(ALLOWED_ACTIONS), "guidian": True, "calendar": True, "diary": True, "diary_storage": "phone_local", "app_gate": True, "focus_tools": True, "diary_rename_fix": True, "diary_write_fallback": True, "diary_annotation_tools": True, "diary_annotation_whitelist_fix": True})
+            self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "tools": sorted(ALLOWED_ACTIONS), "guidian": True, "calendar": True, "diary": True, "diary_storage": "phone_local", "app_gate": True, "focus_tools": True, "diary_rename_fix": True, "diary_write_fallback": True, "diary_annotation_tools": True, "diary_annotation_whitelist_fix": True, "workflow_rules": True, "workflow_version": WORKFLOW_VERSION})
             return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
@@ -473,6 +524,26 @@ class Handler(BaseHTTPRequestHandler):
             limit = max(1, min(500, int(qs.get("limit", ["50"])[0] or 50)))
             events = self.state.list_activity_events(device_id, date, source, limit)
             self._json(200, {"ok": True, "events": events, "count": len(events)}); return
+        # SOL_WORKFLOW_RULES_V1
+        if path == "/api/workflows":
+            if not self._require_token(): return
+            enabled_only = str(qs.get("enabled_only", ["false"])[0]).lower() in ("1", "true", "yes", "on")
+            rules = self.state.workflow_engine.list_rules(enabled_only=enabled_only)
+            self._json(200, {"ok": True, "workflow_version": WORKFLOW_VERSION, "rules": rules, "count": len(rules)}); return
+        if path == "/api/workflows/runs":
+            if not self._require_token(): return
+            limit = max(1, min(500, int(qs.get("limit", ["50"])[0] or 50)))
+            rule_id = qs.get("rule_id", [""])[0]
+            runs = self.state.workflow_engine.list_runs(limit=limit, rule_id=rule_id)
+            self._json(200, {"ok": True, "runs": runs, "count": len(runs)}); return
+        if path == "/api/workflows/inbox":
+            if not self._require_token(): return
+            limit = max(1, min(500, int(qs.get("limit", ["50"])[0] or 50)))
+            status = qs.get("status", ["pending"])[0]
+            kind = qs.get("kind", [""])[0]
+            items = self.state.workflow_engine.list_inbox(limit=limit, status=status, kind=kind)
+            self._json(200, {"ok": True, "items": items, "count": len(items)}); return
+
         if path == "/api/poll":
             if not self._require_token(): return
             device_id = qs.get("device_id", [DEFAULT_DEVICE])[0] or DEFAULT_DEVICE
@@ -541,7 +612,51 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_token(): return
             data = self._read_json()
             event = self.state.add_activity_event(data, max(0, min(300, int(data.get("dedupe_seconds") or 0))))
-            self._json(200, {"ok": True, "event": event}); return
+            workflow = None
+            if str(data.get("source") or "") != "workflow":
+                try:
+                    workflow = self.state.workflow_engine.emit_event("activity.created", {"activity": event}, device_id=event.get("device_id") or DEFAULT_DEVICE, source="activity", event_id=f"activity:{event.get('id')}")
+                except Exception:
+                    workflow = None
+            self._json(200, {"ok": True, "event": event, "workflow_fired_count": int((workflow or {}).get("fired_count") or 0)}); return
+        # SOL_WORKFLOW_RULES_V1
+        if path == "/api/workflows/upsert":
+            if not self._require_token(): return
+            data = self._read_json()
+            try:
+                rule = self.state.workflow_engine.upsert_rule(data.get("rule") or {})
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": "invalid_workflow_rule", "detail": str(exc)}); return
+            self._json(200, {"ok": True, "rule": rule}); return
+        if path == "/api/workflows/enable":
+            if not self._require_token(): return
+            data = self._read_json(); rid = str(data.get("rule_id") or "")
+            rule = self.state.workflow_engine.set_enabled(rid, bool(data.get("enabled")))
+            if rule is None:
+                self._json(404, {"ok": False, "error": "workflow_not_found", "rule_id": rid}); return
+            self._json(200, {"ok": True, "rule": rule}); return
+        if path == "/api/workflows/emit":
+            if not self._require_token(): return
+            data = self._read_json()
+            try:
+                result = self.state.workflow_engine.emit_event(
+                    data.get("event_name") or data.get("event") or "",
+                    data.get("payload") if isinstance(data.get("payload"), dict) else {},
+                    device_id=data.get("device_id") or DEFAULT_DEVICE,
+                    source=data.get("source") or "api",
+                    event_id=data.get("event_id") or "",
+                )
+            except ValueError as exc:
+                self._json(400, {"ok": False, "error": "invalid_workflow_event", "detail": str(exc)}); return
+            self._json(200, result); return
+        if path == "/api/workflows/inbox/ack":
+            if not self._require_token(): return
+            data = self._read_json(); item_id = str(data.get("item_id") or "")
+            item = self.state.workflow_engine.ack_inbox(item_id, str(data.get("status") or "done"), str(data.get("note") or ""))
+            if item is None:
+                self._json(404, {"ok": False, "error": "workflow_inbox_item_not_found", "item_id": item_id}); return
+            self._json(200, {"ok": True, "item": item}); return
+
         if path == "/api/takeout/resolve_jd_link":
             if not self._require_token(): return
             data = self._read_json()
@@ -586,7 +701,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_token(): return
             data = self._read_json(); device_id = data.get("device_id") or DEFAULT_DEVICE
             data["updated_at"] = now_iso(); self.state.device_states[device_id] = data
-            self._json(200, {"ok": True, "device_id": device_id}); return
+            try:
+                workflow = self.state.workflow_engine.emit_event("device.state.updated", data, device_id=device_id, source="phone", event_id=f"device-state:{device_id}:{data.get('updated_at')}")
+                fired_count = int(workflow.get("fired_count") or 0)
+            except Exception:
+                fired_count = 0
+            self._json(200, {"ok": True, "device_id": device_id, "workflow_fired_count": fired_count}); return
         if path == "/api/device/report":
             if not self._require_token(): return
             data = self._read_json()
@@ -608,6 +728,11 @@ class Handler(BaseHTTPRequestHandler):
                         "status": completed_cmd["status"], "metadata_json": {"command_id": cid, "result": clip_text(str(data.get("result") or ""), 500)}
                     })
                 except Exception: pass
+            if completed_cmd is not None:
+                try:
+                    self.state.workflow_engine.emit_event("command.completed", {"command": completed_cmd, "report": data}, device_id=completed_cmd.get("device_id") or DEFAULT_DEVICE, source="phone", event_id=f"command:{cid}:completed")
+                except Exception:
+                    pass
             self._json(200, {"ok": True, "report": data, "command": self.state.command_history.get(cid)}); return
         if path == "/api/appgate/unlock_request":
             if not self._require_token(): return
@@ -621,11 +746,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json(404, {"ok": False, "error": ERR_BAD_METHOD})
 
     def _queue(self, cmd: dict) -> None:
-        with self.state.commands_lock:
-            # 防止短时间狂点堆很多同类命令；控制命令保留顺序，peek 最多保留 3 个。
-            if cmd.get("action") == "peek" and sum(1 for c in self.state.commands if c.get("action") == "peek") >= 3:
-                return
-            self.state.commands.append(cmd)
+        # SOL_WORKFLOW_RULES_V1: HTTP 与规则引擎共享同一个队列入口。
+        self.state.queue_command(cmd)
 
     def _handle_screenshot(self) -> None:
         length = int(self.headers.get("Content-Length", 0))

@@ -1,4 +1,13 @@
-# 掌心窗公开版 v0.3.9.0
+# 掌心窗公开版 v0.3.10
+
+## v0.3.10 Workflow / Rules v1
+
+- 新增持久化事件规则、事件触发、条件、冷却、事件去重、运行记录和 Sol 收件箱。
+- 新增 MCP Workflow 管理工具；规则可发送通知或闹钟，也可把需要 Sol 判断的事件放入收件箱。
+- 后台规则执行锁定 App、结束/延长锁定、开启/结束全机 Focus、归电、打开 App 或息屏等高影响手机动作，必须由 `emit_workflow_event` 的独立 `explicit_consent=true` 参数明确授权。事件 JSON 载荷不能伪造该授权。
+- 内置刷手机规则只发温和通知并交给 Sol 判断，不会自动锁 App；日记页边纸条引擎已支持 `diary.annotation.created`，Android 本地批注事件仍需后续接线。
+- `observer/` 提供本地 Workflow Inbox watcher。默认 dry-run；只有 `--live` 才会通过现有 cli-chat-bridge 唤醒 Sol。部署 server/MCP 后，请把 observer 放到 Solune 项目目录并按 [observer/README.md](observer/README.md) 配置。
+- 规则说明见 [docs/WORKFLOW_RULES_V1.md](docs/WORKFLOW_RULES_V1.md)。
 
 ## v0.3.9.0 MCP 兼容与日记批注读取修复
 
