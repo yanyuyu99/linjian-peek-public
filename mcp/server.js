@@ -5,6 +5,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
 import fs from "fs";
 import path from "path";
+import { diagnosticResponseHeaders } from "./diagnostics.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const RAW_LINJIAN_URL = (process.env.LINJIAN_URL || "").trim();
@@ -726,6 +727,10 @@ async function linjianFetch(path, options = {}) {
       });
       activeLinjianUrl = base;
       if (!res.ok) {
+        console.warn("[linjianFetch] upstream HTTP error", JSON.stringify({
+          status: res.status,
+          headers: diagnosticResponseHeaders(res.headers)
+        }));
         const text = await res.text().catch(() => "");
         if (res.status === 429) {
           const retry = res.headers.get("retry-after") || "稍后";
@@ -735,6 +740,12 @@ async function linjianFetch(path, options = {}) {
       }
       return res;
     } catch (e) {
+      if (!/^Linjian server HTTP /.test(String(e?.message || e))) {
+        console.warn("[linjianFetch] upstream network error", JSON.stringify({
+          type: e?.name || typeof e,
+          headers: diagnosticResponseHeaders(e?.response?.headers)
+        }));
+      }
       errors.push(`${base}: ${e?.message || String(e)}`);
       // HTTP 错误已经连上了后端，继续换地址意义不大，直接报出来。
       if (/^Linjian server HTTP /.test(String(e?.message || e))) throw e;
