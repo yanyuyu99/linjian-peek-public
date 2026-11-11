@@ -43,8 +43,20 @@ public class CompanionService extends Service {
     private HandlerThread pollThread;
     private long rateLimitedUntilMs = 0L;
     private static long lastStateUploadMs = 0L;
+    private static volatile long lastPollHeartbeatMs = 0L;
 
-    public static boolean isRunning() { return running; }
+    public static boolean isRunning() {
+        return running && lastPollHeartbeatMs > 0L && System.currentTimeMillis() - lastPollHeartbeatMs < 60000L;
+    }
+
+    public static boolean isPollingHealthy(Context ctx) {
+        if (!running || lastPollHeartbeatMs <= 0L) return false;
+        int interval = ctx == null ? AppPrefs.DEFAULT_POLL_INTERVAL_MS : AppPrefs.interval(ctx);
+        long staleAfterMs = Math.max(30000L, interval * 4L + 20000L);
+        return System.currentTimeMillis() - lastPollHeartbeatMs < staleAfterMs;
+    }
+
+    private void markPollHeartbeat() { lastPollHeartbeatMs = System.currentTimeMillis(); }
     @Override public IBinder onBind(Intent intent) { return null; }
 
     @Override public int onStartCommand(Intent intent, int flags, int startId) {
@@ -64,8 +76,19 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.10 服务已启动，目标：" + serverUrl);
-        if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
+        DebugState.append(this, "掌心窗公开版 v0.3.11 服务已启动，目标：" + serverUrl);
+        if (!isPollingHealthy(this)) {
+            if (pollThread != null) {
+                try { pollThread.quitSafely(); } catch (Exception ignored) { }
+                pollThread = null;
+                pollHandler = null;
+            }
+            running = true;
+            startPolling();
+            DebugState.append(this, "前台轮询已启动/恢复");
+        } else {
+            DebugState.append(this, "服务已在运行，轮询心跳正常");
+        }
         return START_STICKY;
     }
 
@@ -73,12 +96,14 @@ public class CompanionService extends Service {
         pollThread = new HandlerThread("LinjianUnifiedPoll");
         pollThread.start();
         pollHandler = new Handler(pollThread.getLooper());
+        markPollHeartbeat();
         DebugState.append(this, "前台轮询线程已启动");
         pollHandler.post(this::pollLoop);
     }
 
     private void pollLoop() {
         if (!running) return;
+        markPollHeartbeat();
         long now = System.currentTimeMillis();
         long delay = AppPrefs.interval(this);
         try {
@@ -90,7 +115,8 @@ public class CompanionService extends Service {
                 if (body != null && body.length() > 0) handleCommandBody(this, body, serverUrl, token);
             }
         } catch (Exception e) { DebugState.append(this, "轮询异常：" + ScreenshotService.shortMsg(e)); }
-        if (running) pollHandler.postDelayed(this::pollLoop, Math.max(AppPrefs.MIN_POLL_INTERVAL_MS, delay));
+        markPollHeartbeat();
+        if (running && pollHandler != null) pollHandler.postDelayed(this::pollLoop, Math.max(AppPrefs.MIN_POLL_INTERVAL_MS, delay));
     }
 
     private String pollServer() throws Exception {
@@ -605,5 +631,5 @@ public class CompanionService extends Service {
 
     private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationManager nm = getSystemService(NotificationManager.class); NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW); channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求"); nm.createNotificationChannel(channel); NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH); reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式"); reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC); reminder.enableVibration(true); nm.createNotificationChannel(reminder); } }
     private Notification buildNotification(String text) { Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this); return builder.setContentTitle("掌心窗运行中").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_view).setOngoing(true).build(); }
-    @Override public void onDestroy() { running = false; DebugState.append(this, "服务已销毁/停止"); if (pollThread != null) pollThread.quitSafely(); super.onDestroy(); }
+    @Override public void onDestroy() { running = false; lastPollHeartbeatMs = 0L; DebugState.append(this, "服务已销毁/停止"); if (pollThread != null) pollThread.quitSafely(); pollThread = null; pollHandler = null; super.onDestroy(); }
 }

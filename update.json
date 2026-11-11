@@ -1,14 +1,12 @@
 {
-  "latest_version_name": "0.3.10",
-  "latest_version_code": 31000,
-  "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.10/Zhangxinchuang-public-v0.3.10.apk",
-  "sha256": "52abfd4e1a36a045b561e1c517172f77d6a13e01fa8490e85613f63ef577610d",
+  "latest_version_name": "0.3.11",
+  "latest_version_code": 31100,
+  "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.11/Zhangxinchuang-public-v0.3.11.apk",
+  "sha256": "",
   "required": false,
   "changelog": [
-    "新增「看见」回复闭环：截图可绑定回复，并可查看最近看见记录与回应。",
-    "系统闹钟支持 default、silent 和指定系统铃声 URI。",
-    "保存日记页边纸条后，自动向 Workflow 发送 diary.annotation.created 事件。",
-    "掌心窗 server 新增 /api/peek/reply 与 /api/peek/history；MCP 增加 reply_peek 和 peek_history。",
-    "版本升级至 0.3.10（31000），保留公开版固定签名，可覆盖安装同签名旧版本。"
+    "修复荣耀等系统切出掌心窗后远程命令轮询可能假死的问题：改为轮询心跳判断，不再只依赖 running 布尔值。",
+    "无障碍服务发现前台轮询心跳过期时会接管命令轮询，并尝试恢复前台服务。",
+    "保留 0.3.10 的「看见」回复闭环、闹钟铃声、日记 Workflow 事件与固定公开版签名。"
   ]
 }
