@@ -764,6 +764,22 @@ async function postCommand(payload) {
   return await res.json();
 }
 
+async function postPeekReply({ filename = "", content = "", author = "陪伴对象", device_id = DEFAULT_DEVICE } = {}) {
+  const res = await linjianFetch("/api/peek/reply", {
+    method: "POST",
+    timeout_ms: QUICK_FETCH_TIMEOUT_MS,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename, content, author, device_id })
+  });
+  return await res.json();
+}
+
+async function getPeekHistory(limit = 20) {
+  const safeLimit = Math.max(1, Math.min(100, Number(limit || 20)));
+  const res = await linjianFetch(`/api/peek/history?limit=${encodeURIComponent(safeLimit)}`, { timeout_ms: QUICK_FETCH_TIMEOUT_MS });
+  return await res.json();
+}
+
 
 function absoluteLinjianUrl(pathOrUrl) {
   if (!pathOrUrl) return "";
@@ -1210,6 +1226,23 @@ function makeServer() {
 
   // 把小金库/外卖统一入口放在普通 /mcp 的靠前位置，避免客户端只读取前若干个工具时漏掉新版能力。
   registerWalletTakeoutTools(server, { includeUnified: true });
+
+  server.tool("reply_peek", "回复最近一次或指定的一次“看见”截图。传 filename 时会精确绑定到该截图；省略 filename 时绑定服务器最新截图。适合看完用户屏幕后把一句回应留回掌心窗。", {
+    content: z.string().min(1).max(1600),
+    filename: z.string().default(""),
+    author: z.string().max(40).default("陪伴对象"),
+    device_id: z.string().default(DEFAULT_DEVICE)
+  }, async ({ content, filename = "", author = "陪伴对象", device_id = DEFAULT_DEVICE }) => {
+    const result = await postPeekReply({ filename, content, author, device_id });
+    return textResult(result, !result?.ok);
+  });
+
+  server.tool("peek_history", "读取最近的“看见”截图记录以及每张截图对应的回复。用于确认某次截图有没有被回应、查看最近几次看见记录。", {
+    limit: z.number().int().min(1).max(100).default(20)
+  }, async ({ limit = 20 }) => {
+    const result = await getPeekHistory(limit);
+    return textResult(result, !result?.ok);
+  });
 
   server.tool(
     "peek_screen",
@@ -2018,12 +2051,12 @@ function makeServer() {
     return { content: [{ type: "text", text: JSON.stringify({ ...result, note: "若手机未弹出通知，请在系统设置中允许掌心窗发送通知。" }, null, 2) }] };
   });
 
-  server.tool("set_alarm", "设置系统闹钟。可用于陪伴对象主动安排睡觉、休息、学习、出门、喝水、计划执行或生活提醒。当用户提到“一会儿要做/几点要去/等下提醒/今天计划”等相近表达时主动调用。hour 为 0-23，minute 为 0-59。", {
-    hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), message: z.string().default("掌心窗闹钟"), vibrate: z.boolean().default(true), skip_ui: z.boolean().default(true), device_id: z.string().default(DEFAULT_DEVICE)
-  }, async ({ hour, minute, message = "掌心窗闹钟", vibrate = true, skip_ui = true, device_id = DEFAULT_DEVICE }) => {
-    const result = await postCommand({ action: "set_alarm", device_id, payload: { hour, minute, message, vibrate, skip_ui } });
+  server.tool("set_alarm", "设置系统闹钟。可用于陪伴对象主动安排睡觉、休息、学习、出门、喝水、计划执行或生活提醒。当用户提到“一会儿要做/几点要去/等下提醒/今天计划”等相近表达时主动调用。hour 为 0-23，minute 为 0-59；ringtone 支持 default、silent 或系统可识别的铃声 URI。", {
+    hour: z.number().int().min(0).max(23), minute: z.number().int().min(0).max(59), message: z.string().default("掌心窗闹钟"), vibrate: z.boolean().default(true), skip_ui: z.boolean().default(true), ringtone: z.string().default("default"), device_id: z.string().default(DEFAULT_DEVICE)
+  }, async ({ hour, minute, message = "掌心窗闹钟", vibrate = true, skip_ui = true, ringtone = "default", device_id = DEFAULT_DEVICE }) => {
+    const result = await postCommand({ action: "set_alarm", device_id, payload: { hour, minute, message, vibrate, skip_ui, ringtone } });
     await postCompanionAction("set_alarm", { summary: `设置了 ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")} 的闹钟` });
-    return { content: [{ type: "text", text: JSON.stringify({ ...result, note: "部分手机系统可能仍会弹出闹钟 App 确认界面。" }, null, 2) }] };
+    return { content: [{ type: "text", text: JSON.stringify({ ...result, ringtone, note: "部分手机系统可能仍会弹出闹钟 App 确认界面；系统是否接受指定 URI 取决于闹钟应用。" }, null, 2) }] };
   });
 
 

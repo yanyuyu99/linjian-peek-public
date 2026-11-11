@@ -136,7 +136,7 @@ public class MainActivity extends Activity {
         loadSettings();
         NowState.start(this);
 
-        DebugState.append(this, "掌心窗公开版 v0.3.9.0 已打开");
+        DebugState.append(this, "掌心窗公开版 v0.3.10 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isRunning();
         updateUI();
@@ -572,7 +572,7 @@ public class MainActivity extends Activity {
         root.addView(sectionHeading("更多陪伴"), marginBottom(8));
         root.addView(actionSettingBlock("TA 的日记", "把今天看见的你，轻轻写下来。", R.drawable.ic_heart_wave, this::showDiaryHomePage), marginBottom(7));
         root.addView(guardSettingBlock("归电", "很久没回来时，" + AppPrefs.companionName(this) + "来敲门", R.drawable.ic_clock, drawerGuidian), marginBottom(7));
-        root.addView(actionSettingBlock("看见", "查看屏幕并回应此刻", R.drawable.ic_eye, this::testScreenshot), marginBottom(10));
+        root.addView(actionSettingBlock("看见", "查看屏幕、回应与最近记录", R.drawable.ic_eye, this::showPeekDetailDialog), marginBottom(10));
         return root;
     }
 
@@ -2485,10 +2485,90 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.9.0 右侧 love 线稿花枝已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.10 右侧 love 线稿花枝已启用"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
+
+    private void showPeekDetailDialog() {
+        saveSettings();
+        TextView detail = body("正在读取最近的看见记录…", 11);
+        detail.setPadding(dp(16), dp(8), dp(16), dp(8));
+        detail.setLineSpacing(dp(5), 1f);
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(detail, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("看见")
+                .setView(scroll)
+                .setNegativeButton("关闭", null)
+                .setNeutralButton("刷新", null)
+                .setPositiveButton("再看一眼", (d, which) -> testScreenshot())
+                .create();
+        dialog.setOnShowListener(ignored -> dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener(v -> loadPeekHistory(detail)));
+        dialog.show();
+        loadPeekHistory(detail);
+    }
+
+    private void loadPeekHistory(TextView target) {
+        final String base = AppPrefs.server(this);
+        final String token = AppPrefs.token(this);
+        if (base.isEmpty() || token.isEmpty()) {
+            target.setText("还没有配置服务器地址或 Token。");
+            return;
+        }
+        target.setText("正在读取最近的看见记录…");
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            String text;
+            try {
+                connection = (HttpURLConnection) new URL(base + "/api/peek/history?limit=8").openConnection();
+                connection.setConnectTimeout(8000);
+                connection.setReadTimeout(8000);
+                connection.setRequestProperty("X-Auth-Token", token);
+                connection.setRequestProperty("Accept", "application/json");
+                int code = connection.getResponseCode();
+                if (code < 200 || code >= 300) throw new IllegalStateException("HTTP " + code);
+                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+                try (InputStream in = connection.getInputStream()) {
+                    byte[] buffer = new byte[4096];
+                    int count;
+                    while ((count = in.read(buffer)) >= 0) bytes.write(buffer, 0, count);
+                }
+                JSONObject data = new JSONObject(new String(bytes.toByteArray(), StandardCharsets.UTF_8));
+                JSONArray items = data.optJSONArray("items");
+                if (items == null || items.length() == 0) {
+                    text = "还没有看见记录。\n\n点「再看一眼」，把此刻的屏幕给 " + AppPrefs.companionName(this) + " 看。";
+                } else {
+                    StringBuilder out = new StringBuilder();
+                    for (int i = 0; i < items.length(); i++) {
+                        JSONObject item = items.optJSONObject(i);
+                        if (item == null) continue;
+                        double mtime = item.optDouble("mtime", 0);
+                        String when = mtime > 0
+                                ? new SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(new Date((long)(mtime * 1000)))
+                                : "时间未知";
+                        out.append(i == 0 ? "最近一次" : "更早").append(" · ").append(when).append("\n");
+                        JSONObject reply = item.optJSONObject("reply");
+                        if (reply == null) {
+                            out.append("还没有收到回应。");
+                        } else {
+                            String author = reply.optString("author", AppPrefs.companionName(this));
+                            String content = reply.optString("content", "").trim();
+                            out.append(author).append("：").append(content.isEmpty() ? "（空回复）" : content);
+                        }
+                        if (i < items.length() - 1) out.append("\n\n");
+                    }
+                    text = out.toString();
+                }
+            } catch (Exception e) {
+                text = "读取失败：" + ScreenshotService.shortMsg(e) + "\n\n可以先确认掌心窗 server 已更新到 0.3.10。";
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+            final String result = text;
+            runOnUiThread(() -> target.setText(result));
+        }, "peek-history").start();
+    }
 
     private void testScreenshot() {
         saveSettings(); String url = serverUrl == null ? "" : serverUrl.getText().toString().trim(); String token = tokenInput == null ? "" : tokenInput.getText().toString().trim(); ScreenshotService ss = ScreenshotService.getInstance();

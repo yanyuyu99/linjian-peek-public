@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""掌心窗公开版 v0.3.9.0 unified server.
+"""掌心窗公开版 v0.3.10 unified server.
 
 零依赖标准库版，负责：
 1. 给手机端下发 peek / open_app / back / home / recents / tap / swipe / set_alarm / send_notification 命令；
@@ -221,6 +221,9 @@ class State:
         self.data_dir = Path(data_dir).resolve()
         self.shots_dir = self.data_dir / "screenshots"
         self.shots_dir.mkdir(parents=True, exist_ok=True)
+        self.peek_replies_path = self.data_dir / "peek_replies.json"
+        self.peek_replies_lock = Lock()
+        self.peek_replies = self._load_peek_replies()
         self.commands: list[dict] = []
         self.command_history: dict[str, dict] = {}
         self.commands_lock = Lock()
@@ -409,6 +412,68 @@ class State:
             }, int(data.get("dedupe_seconds") or 0))
         return entry
 
+    def _load_peek_replies(self) -> list[dict]:
+        try:
+            if self.peek_replies_path.exists():
+                loaded = json.loads(self.peek_replies_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, list):
+                    return loaded[:500]
+        except Exception:
+            pass
+        return []
+
+    def save_peek_replies(self) -> None:
+        self.peek_replies_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.peek_replies_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(self.peek_replies[:500], ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(self.peek_replies_path)
+
+    def add_peek_reply(self, data: dict) -> dict:
+        filename = Path(str(data.get("filename") or "")).name
+        if not filename:
+            shot = self.latest_shot()
+            filename = shot.name if shot else ""
+        if not filename.startswith("peek_"):
+            raise ValueError("invalid_peek_filename")
+        shot_path = self.shots_dir / filename
+        if not shot_path.exists():
+            raise ValueError("peek_not_found")
+        content = clip_text(str(data.get("content") or data.get("message") or data.get("reply") or ""), 1600)
+        if not content:
+            raise ValueError("empty_peek_reply")
+        entry = {
+            "id": str(uuid.uuid4()),
+            "filename": filename,
+            "content": content,
+            "author": clip_text(str(data.get("author") or "陪伴对象"), 40),
+            "device_id": clip_text(str(data.get("device_id") or DEFAULT_DEVICE), 80),
+            "created_at": now_iso(),
+        }
+        with self.peek_replies_lock:
+            self.peek_replies.insert(0, entry)
+            del self.peek_replies[500:]
+            self.save_peek_replies()
+        return dict(entry)
+
+    def list_peek_history(self, limit: int = 20) -> list[dict]:
+        limit = max(1, min(100, int(limit or 20)))
+        shots = sorted(self.shots_dir.glob("peek_*"), key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+        with self.peek_replies_lock:
+            replies = list(self.peek_replies)
+        items = []
+        for shot in shots:
+            st = shot.stat()
+            shot_replies = [dict(r) for r in replies if r.get("filename") == shot.name]
+            items.append({
+                "filename": shot.name,
+                "size": st.st_size,
+                "mtime": st.st_mtime,
+                "url": "/api/latest" if shot == self.latest_shot() else "",
+                "reply": shot_replies[0] if shot_replies else None,
+                "replies": shot_replies,
+            })
+        return items
+
     def latest_shot(self) -> Path | None:
         shots = sorted(self.shots_dir.glob("peek_*"), key=lambda p: p.stat().st_mtime)
         return shots[-1] if shots else None
@@ -556,6 +621,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.state.command_history[cmd.get("id", "")] = dict(cmd)
             self._json(200, {"ok": True, "command": cmd})
             return
+        if path == "/api/peek/history":
+            if not self._require_token(): return
+            limit = max(1, min(100, int(qs.get("limit", ["20"])[0] or 20)))
+            items = self.state.list_peek_history(limit)
+            self._json(200, {"ok": True, "items": items, "count": len(items)}); return
         if path == "/api/latest.json":
             if not self._require_token(): return
             shot = self.state.latest_shot()
@@ -661,6 +731,15 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_token(): return
             data = self._read_json()
             self._json(200, resolve_jd_share_link(data.get("url") or data.get("link") or "", data.get("item_query") or data.get("query") or "")); return
+        if path == "/api/peek/reply":
+            if not self._require_token(): return
+            data = self._read_json()
+            try:
+                reply = self.state.add_peek_reply(data)
+            except ValueError as exc:
+                code = 404 if str(exc) == "peek_not_found" else 400
+                self._json(code, {"ok": False, "error": str(exc)}); return
+            self._json(200, {"ok": True, "reply": reply}); return
         if path == "/api/peek":
             if not self._require_token(): return
             self._queue(make_command(DEFAULT_DEVICE, "peek")); self._json(200, {"ok": True, "queued": True}); return
