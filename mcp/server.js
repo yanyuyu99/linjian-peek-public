@@ -2357,6 +2357,8 @@ app.get("/health", (_req, res) => res.json({
   focus_tools: true,
   workflow_rules: true,
   workflow_version: "1.0",
+  peek_reply_tools: true,
+  peek_reply_tool_names: ["reply_peek", "peek_history"],
   focus_tool_names: ["get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock"],
   mcp_wallet_endpoint: "/mcp-wallet",
   schema_exposure_fix: true,
@@ -2364,7 +2366,7 @@ app.get("/health", (_req, res) => res.json({
   priority_tool: "wallet_takeout_action",
   wallet_takeout_tool_count: WALLET_TAKEOUT_ACTIONS.size,
   wallet_takeout_tools: Array.from(WALLET_TAKEOUT_ACTIONS),
-  stability_note: "v0.3.9.0 同步公开版版本信息；普通 /mcp 提前注册统一入口，新增 /mcp-wallet 专用端点，并把专注模式工具前置注册，兼容部分客户端不暴露新增工具的问题。"
+  stability_note: "v0.3.10：普通 /mcp 已暴露 reply_peek 与 peek_history；保留 wallet_takeout_action 统一入口、/mcp-wallet 专用端点和前置专注模式工具，兼容部分客户端工具列表截断问题。"
 }));
 
 // Some third-party MCP clients send non-standard experimental capability flags during
