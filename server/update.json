@@ -2,7 +2,7 @@
   "latest_version_name": "0.3.11",
   "latest_version_code": 31100,
   "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.11/Zhangxinchuang-public-v0.3.11.apk",
-  "sha256": "",
+  "sha256": "ee6c7bff0755cb9b59dc9395fe6d050dd278a55fb13581673f331b4c2bc92be3",
   "required": false,
   "notes": [
     "修复荣耀等系统切出掌心窗后远程命令轮询可能假死的问题：改为轮询心跳判断，不再只依赖 running 布尔值。",
