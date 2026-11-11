@@ -560,6 +560,35 @@ public class CompanionService extends Service {
         HomeMode.evaluate(ctx, state);
     }
 
+    public static void emitWorkflowEventAsync(Context ctx, String eventName, JSONObject payload, String eventId) {
+        if (ctx == null || eventName == null || eventName.trim().isEmpty()) return;
+        final Context appCtx = ctx.getApplicationContext();
+        final String serverUrl = AppPrefs.server(appCtx);
+        final String token = AppPrefs.token(appCtx);
+        if (serverUrl.isEmpty() || token.isEmpty()) {
+            DebugState.append(appCtx, "Workflow 事件未发送：服务器地址或 Token 为空");
+            return;
+        }
+        final String safeEvent = eventName.trim();
+        final JSONObject safePayload;
+        try { safePayload = payload == null ? new JSONObject() : new JSONObject(payload.toString()); }
+        catch (Exception e) { return; }
+        new Thread(() -> {
+            try {
+                JSONObject body = new JSONObject();
+                body.put("event_name", safeEvent);
+                body.put("payload", safePayload);
+                body.put("device_id", AppPrefs.device(appCtx));
+                body.put("source", "android");
+                if (eventId != null && !eventId.trim().isEmpty()) body.put("event_id", eventId.trim());
+                String response = postJson(serverUrl + "/api/workflows/emit", token, body);
+                DebugState.append(appCtx, "Workflow 事件已发送 " + safeEvent + "：" + response);
+            } catch (Exception e) {
+                DebugState.append(appCtx, "Workflow 事件发送失败 " + safeEvent + "：" + ScreenshotService.shortMsg(e));
+            }
+        }, "workflow-event-" + safeEvent.replace('.', '-')).start();
+    }
+
     private static void reportCommand(Context ctx, String serverUrl, String token, String id, boolean ok, String result) throws Exception {
         if (id == null || id.length() == 0) return;
         JSONObject report = new JSONObject(); report.put("device_id", AppPrefs.device(ctx)); report.put("command_id", id); report.put("ok", ok); report.put("result", result);
