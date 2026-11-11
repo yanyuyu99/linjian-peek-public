@@ -35,3 +35,8 @@ build/
 
 # Archives
 *.zip
+observer/logs/
+observer/workflow-codex-state.json
+observer/workflow-watcher-state.json
+observer/.workflow-codex-runner.lock
+observer/.workflow-inbox-forward.lock
