@@ -64,7 +64,7 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.9.0 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗公开版 v0.3.10 服务已启动，目标：" + serverUrl);
         if (!running) { running = true; startPolling(); } else DebugState.append(this, "服务已在运行，继续轮询");
         return START_STICKY;
     }
@@ -148,6 +148,7 @@ public class CompanionService extends Service {
             String message = cmd.optString("message", cmd.optString("text", title.length() > 0 ? title : "掌心窗闹钟"));
             boolean vibrate = cmd.optBoolean("vibrate", true);
             boolean skipUi = cmd.optBoolean("skip_ui", cmd.optBoolean("skipUi", true));
+            String ringtone = cmd.optString("ringtone", "default");
             if ("set_alarm".equals(action) && (hour < 0 || minute < 0)) {
                 double delayMinutes = cmd.optDouble("minutes", 0);
                 if (delayMinutes <= 0) delayMinutes = cmd.optDouble("duration_minutes", 0);
@@ -239,7 +240,7 @@ public class CompanionService extends Service {
                 executeSequence(ctx, id, cmd, serverUrl, token);
                 return;
             }
-            executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, targetText, inputText, match, index, append);
+            executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, ringtone, targetText, inputText, match, index, append);
         } catch (Exception e) { DebugState.append(ctx, "命令解析异常：" + ScreenshotService.shortMsg(e)); }
     }
 
@@ -278,22 +279,22 @@ public class CompanionService extends Service {
     }
 
     private static void executeCommand(Context ctx, String id, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token) {
-        executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, true, "", "", "contains", 1, false);
+        executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, true, "default", "", "", "contains", 1, false);
     }
 
     private static void executeCommand(Context ctx, String id, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token, boolean skipUi) {
-        executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, "", "", "contains", 1, false);
+        executeCommand(ctx, id, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, "default", "", "", "contains", 1, false);
     }
 
-    private static void executeCommand(Context ctx, String id, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token, boolean skipUi, String targetText, String inputText, String match, int index, boolean append) {
-        JSONObject one = performAction(ctx, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, targetText, inputText, match, index, append);
+    private static void executeCommand(Context ctx, String id, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token, boolean skipUi, String ringtone, String targetText, String inputText, String match, int index, boolean append) {
+        JSONObject one = performAction(ctx, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, ringtone, targetText, inputText, match, index, append);
         boolean ok = one.optBoolean("ok", false);
         String result = one.optString("result", one.toString());
         DebugState.append(ctx, "执行命令 " + action + "：" + result);
         try { reportCommand(ctx, serverUrl, token, id, ok, result); uploadStateThrottled(serverUrl, token, ctx, false); } catch (Exception ignored) { }
     }
 
-    private static JSONObject performAction(Context ctx, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token, boolean skipUi, String targetText, String inputText, String match, int index, boolean append) {
+    private static JSONObject performAction(Context ctx, String action, String app, String pkg, float x, float y, float x1, float y1, float x2, float y2, long duration, int hour, int minute, String title, String message, boolean vibrate, String serverUrl, String token, boolean skipUi, String ringtone, String targetText, String inputText, String match, int index, boolean append) {
         JSONObject out = new JSONObject();
         boolean ok = false; String result = "";
         try {
@@ -334,7 +335,7 @@ public class CompanionService extends Service {
             } else if ("screen_off".equals(action) || "turn_screen_off".equals(action) || "lock_screen".equals(action) || "phone_screen_off".equals(action)) { ok = svc != null && svc.doLockScreen(); result = ok ? "screen_off" : "screen_off_failed_or_accessibility_missing_or_android_too_old";
             } else if ("tap".equals(action)) { ok = svc != null && svc.doTap(x, y); result = ok ? ("tap:" + x + "," + y) : "tap_failed_or_accessibility_missing";
             } else if ("swipe".equals(action)) { ok = svc != null && svc.doSwipe(x1, y1, x2, y2, duration); result = ok ? "swipe" : "swipe_failed_or_accessibility_missing";
-            } else if ("set_alarm".equals(action)) { ok = setAlarm(ctx, hour, minute, message, vibrate, skipUi); result = ok ? "alarm " + hour + ":" + minute : "cannot set alarm";
+            } else if ("set_alarm".equals(action)) { ok = setAlarm(ctx, hour, minute, message, vibrate, skipUi, ringtone); result = ok ? "alarm " + hour + ":" + minute + " ringtone=" + (ringtone == null ? "default" : ringtone) : "cannot set alarm";
             } else if ("send_notification".equals(action)) { ok = showReminderNotification(ctx, title, message); result = ok ? "heads_up_notification_sent" : "notification permission missing";
             } else if ("get_guidian_state".equals(action) || "set_guidian_config".equals(action) || "trigger_guidian".equals(action) || "mark_guidian_returned".equals(action)) { JSONObject rr = GuidianState.handleCommand(ctx, new JSONObject().put("action", action)); ok = rr.optBoolean("ok", false); result = rr.toString();
             } else { ok = true; result = "noop"; }
@@ -374,12 +375,13 @@ public class CompanionService extends Service {
                 String message = step.optString("message", AppPrefs.userName(ctx) + "，看一眼这里。");
                 boolean vibrate = step.optBoolean("vibrate", true);
                 boolean skipUi = step.optBoolean("skip_ui", true);
+                String ringtone = step.optString("ringtone", "default");
                 String targetText = step.optString("target_text", step.optString("query", ""));
                 String inputText = step.optString("text", step.optString("input_text", ""));
                 String match = step.optString("match", "contains");
                 int textIndex = step.optInt("index", 1);
                 boolean append = step.optBoolean("append", false);
-                JSONObject r = performAction(ctx, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, targetText, inputText, match, textIndex, append);
+                JSONObject r = performAction(ctx, action, app, pkg, x, y, x1, y1, x2, y2, duration, hour, minute, title, message, vibrate, serverUrl, token, skipUi, ringtone, targetText, inputText, match, textIndex, append);
                 int wait = clampWait(step.optInt("wait_ms", step.optInt("delay_ms", 0)));
                 if (wait > 0) Thread.sleep(wait);
                 String expect = step.optString("expect_app", "").trim();
@@ -514,7 +516,7 @@ public class CompanionService extends Service {
         } catch (Exception e) { DebugState.append(ctx, "悬浮横幅通知异常：" + ScreenshotService.shortMsg(e)); return false; }
     }
 
-    private static boolean setAlarm(Context ctx, int hour, int minute, String message, boolean vibrate, boolean skipUi) {
+    private static boolean setAlarm(Context ctx, int hour, int minute, String message, boolean vibrate, boolean skipUi, String ringtone) {
         if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
         try {
             Intent i = new Intent(AlarmClock.ACTION_SET_ALARM);
@@ -523,8 +525,15 @@ public class CompanionService extends Service {
             i.putExtra(AlarmClock.EXTRA_MESSAGE, message == null || message.length() == 0 ? "掌心窗闹钟" : message);
             i.putExtra(AlarmClock.EXTRA_VIBRATE, vibrate);
             i.putExtra(AlarmClock.EXTRA_SKIP_UI, skipUi);
+            String ring = ringtone == null ? "default" : ringtone.trim();
+            if ("silent".equalsIgnoreCase(ring)) {
+                i.putExtra(AlarmClock.EXTRA_RINGTONE, AlarmClock.VALUE_RINGTONE_SILENT);
+            } else if (ring.length() > 0 && !"default".equalsIgnoreCase(ring)) {
+                i.putExtra(AlarmClock.EXTRA_RINGTONE, ring);
+            }
             i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             ctx.startActivity(i);
+            DebugState.append(ctx, "远程闹钟铃声：" + (ring.length() == 0 ? "default" : ring));
             return true;
         } catch (Exception e) { DebugState.append(ctx, "远程闹钟异常：" + ScreenshotService.shortMsg(e)); return false; }
     }
