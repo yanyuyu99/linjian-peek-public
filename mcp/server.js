@@ -1615,7 +1615,7 @@ function makeServer() {
     style: z.string().max(40).default("margin_note"),
     ...diaryWaitFields
   }, async ({ entry_id, paragraph_index = 0, quote_text = "", annotation_text, mood = "想回应", style = "margin_note", device_id = DEFAULT_DEVICE, wait_seconds = 8 }) => {
-    const result = await runDiaryCommand("add_diary_annotation", { entry_id, paragraph_index, quote_text, annotation_text, mood, style, created_by: "user" }, device_id, wait_seconds);
+    const result = await runDiaryCommand("add_diary_annotation", { entry_id, paragraph_index, quote_text, annotation_text, mood, style, created_by: "companion" }, device_id, wait_seconds);
     return textResult({ action_done: "页边纸条已保存", entry_id, paragraph_index, mood, ...result });
   });
 
