@@ -47,3 +47,23 @@ The watcher stores only IDs it already forwarded in `workflow-watcher-state.json
 ## Safety
 
 The watcher itself never locks apps, starts full-phone Focus, or operates the phone. High-impact actions remain decisions made by Sol after reading current context, and the Workflow Engine only auto-executes those when an incoming event explicitly carries `explicit_consent=true`.
+
+## VPS Codex runner
+
+For a small always-on VPS, `workflow-codex-runner.mjs` avoids a permanent local chat bridge. The watcher stays lightweight and starts a short-lived authenticated Codex CLI process only when a supported Inbox item appears.
+
+```bash
+node ./workflow-codex-runner.mjs --once
+node ./workflow-codex-runner.mjs --watch
+```
+
+Requirements:
+
+- Codex CLI is signed in on the VPS with the user's own ChatGPT account.
+- Codex has a `zhangxinchuang` MCP server configured.
+- `CODEX_BIN` can override the default `~/.local/codex-cli/bin/codex` path.
+- `WORKFLOW_POLL_SECONDS` defaults to 8 seconds.
+- `WORKFLOW_CODEX_TIMEOUT_MS` defaults to 180 seconds.
+- `WORKFLOW_RETRY_SECONDS` defaults to 60 seconds.
+
+The runner handles one Inbox item at a time. It only records an item as handled after Codex exits successfully **and** the item is no longer pending, so an incomplete model turn does not silently swallow the event.

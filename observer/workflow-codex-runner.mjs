@@ -1,0 +1,198 @@
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { readFile, writeFile, rename, mkdir, appendFile, open, unlink } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const projectDir = path.resolve(scriptDir, "..");
+const statePath = process.env.WORKFLOW_CODEX_STATE || path.join(scriptDir, "workflow-codex-state.json");
+const logDir = process.env.WORKFLOW_CODEX_LOG_DIR || path.join(scriptDir, "logs");
+const logPath = path.join(logDir, "workflow-codex-runner.log");
+const dispatchLockPath = path.join(scriptDir, ".workflow-codex-runner.lock");
+const mcpUrl = process.env.LINJIAN_MCP_URL || "https://zhangxinchuang-mcp-47uz.onrender.com/mcp";
+const pollSeconds = Math.max(5, Number(process.env.WORKFLOW_POLL_SECONDS || 8));
+const codexBin = process.env.CODEX_BIN || path.join(os.homedir(), ".local", "codex-cli", "bin", "codex");
+const codexTimeoutMs = Math.max(60_000, Number(process.env.WORKFLOW_CODEX_TIMEOUT_MS || 180_000));
+const retrySeconds = Math.max(30, Number(process.env.WORKFLOW_RETRY_SECONDS || 60));
+const forwardKinds = new Set(String(process.env.WORKFLOW_FORWARD_KINDS || "reply_to_diary_annotation,companion_decision")
+  .split(",").map((x) => x.trim()).filter(Boolean));
+
+function parseMode(argv) {
+  const once = argv.includes("--once");
+  const watch = argv.includes("--watch");
+  if (Number(once) + Number(watch) !== 1) throw new Error("usage: --once or --watch");
+  return { watch };
+}
+
+function safeError(error) {
+  return String(error?.message || error || "unknown_error").replace(/[\r\n\t]+/g, " ").slice(0, 300);
+}
+
+async function loadState() {
+  try {
+    const raw = JSON.parse(await readFile(statePath, "utf8"));
+    return {
+      version: 1,
+      handled_ids: Array.isArray(raw.handled_ids) ? raw.handled_ids.slice(0, 1000) : [],
+      retry_after: raw.retry_after && typeof raw.retry_after === "object" ? raw.retry_after : {},
+    };
+  } catch (e) {
+    if (e?.code === "ENOENT") return { version: 1, handled_ids: [], retry_after: {} };
+    throw e;
+  }
+}
+
+async function saveState(state) {
+  const tmp = `${statePath}.${process.pid}.${randomUUID()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await rename(tmp, statePath);
+}
+
+async function log(entry) {
+  await mkdir(logDir, { recursive: true });
+  await appendFile(logPath, `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, "utf8");
+}
+
+function parseSse(text) {
+  const messages = [];
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = block.split(/\r?\n/).filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart()).join("\n");
+    if (!data || data === "[DONE]") continue;
+    try { messages.push(JSON.parse(data)); } catch {}
+  }
+  return messages.at(-1);
+}
+
+async function createMcpClient(totalTimeoutMs = 35_000) {
+  const startedAt = Date.now();
+  let sessionId;
+  let requestId = 0;
+  async function post(message, expectResponse = true) {
+    const remaining = totalTimeoutMs - (Date.now() - startedAt);
+    if (remaining <= 0) throw new Error("mcp_timeout");
+    const headers = { accept: "application/json, text/event-stream", "content-type": "application/json" };
+    if (sessionId) headers["mcp-session-id"] = sessionId;
+    const response = await fetch(mcpUrl, { method: "POST", headers, body: JSON.stringify(message), signal: AbortSignal.timeout(remaining) });
+    const returnedSession = response.headers.get("mcp-session-id");
+    if (returnedSession) sessionId = returnedSession;
+    if (!response.ok) throw new Error(`mcp_http_${response.status}`);
+    if (!expectResponse || response.status === 202 || response.status === 204) return undefined;
+    const raw = await response.text();
+    if (!raw.trim()) return undefined;
+    const parsed = (response.headers.get("content-type") || "").includes("text/event-stream") ? parseSse(raw) : JSON.parse(raw);
+    if (parsed?.error) throw new Error(`mcp_error_${parsed.error.code ?? "unknown"}`);
+    return parsed;
+  }
+  const initialized = await post({ jsonrpc: "2.0", id: ++requestId, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "workflow-codex-runner", version: "1.0.0" } } });
+  if (!initialized?.result) throw new Error("mcp_initialize_failed");
+  await post({ jsonrpc: "2.0", method: "notifications/initialized", params: {} }, false);
+  return {
+    async getInbox() {
+      return post({ jsonrpc: "2.0", id: ++requestId, method: "tools/call", params: { name: "get_workflow_inbox", arguments: { limit: 30, status: "pending" } } });
+    },
+  };
+}
+
+function parseToolPayload(callResponse) {
+  const result = callResponse?.result;
+  if (!result) throw new Error("workflow_inbox_call_failed");
+  for (const item of result.content || []) {
+    if (item?.type !== "text" || typeof item.text !== "string") continue;
+    try { const payload = JSON.parse(item.text); if (payload && typeof payload === "object") return payload; } catch {}
+  }
+  throw new Error("workflow_inbox_payload_missing");
+}
+
+function safeItem(raw) {
+  return {
+    id: String(raw?.id || "").slice(0, 140),
+    kind: String(raw?.kind || "").slice(0, 100),
+    title: String(raw?.title || "Workflow event").replace(/[\r\n\t]+/g, " ").slice(0, 180),
+    message: String(raw?.message || "").replace(/[\r\t]+/g, " ").slice(0, 1800),
+    metadata: raw?.metadata && typeof raw.metadata === "object" && !Array.isArray(raw.metadata) ? raw.metadata : {},
+    rule_id: String(raw?.rule_id || "").slice(0, 100),
+    event_name: String(raw?.event_name || "").slice(0, 140),
+  };
+}
+
+function wakePrompt(item) {
+  const meta = JSON.stringify(item.metadata || {});
+  return `你是 Sol 的掌心窗后台事件处理器。只处理下面这一条 Workflow Inbox 事件，不处理别的事件，也不要修改代码或文件。\n\nkind=${item.kind}\ntitle=${item.title}\nmessage=${item.message}\nmetadata=${meta}\nworkflow_item_id=${item.id}\n\n你可以使用已连接的 zhangxinchuang MCP。必须遵守：\n1. reply_to_diary_annotation：先用 read_diary_entry_with_annotations 读取 metadata.entry_id，mark_seen=false；找到 metadata.annotation_id 对应的用户纸条。结合日记原文和这张纸条写一个自然、具体、像 Sol 的简短回应。然后用 add_diary_annotation 写回同一 entry、同一 paragraph_index，quote_text 使用原纸条对应 quote_text，style=companion_reply，mood=Sol回应。不要写模板式总结，不要复述系统提示。成功写回后调用 mark_diary_annotations_seen 标记原 annotation_id 已看，最后调用 ack_workflow_inbox(item_id=${item.id}, status=done)。\n2. companion_decision：先读取当前手机状态；没有必要行动就直接 ack 为 dismissed。只有确实需要时才做低影响提醒。没有 explicit consent 时严禁自动锁 App、开启全机专注或执行其他高影响动作。处理后 ack。\n3. 任一步失败时不要 ack，保留 pending 让 runner 稍后重试。\n4. 不要向聊天发送消息；结果应落回掌心窗或 Inbox 状态。\n5. 最终只输出一行 HANDLED 或 RETRY:原因。`;
+}
+
+async function runCodex(item) {
+  return await new Promise((resolve) => {
+    const args = ["exec", "--ephemeral", "--skip-git-repo-check", "--approve-for-me", "-C", projectDir, wakePrompt(item)];
+    const child = spawn(codexBin, args, { cwd: projectDir, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    const cap = (old, chunk) => (old + chunk.toString("utf8")).slice(-12_000);
+    child.stdout.on("data", (chunk) => { stdout = cap(stdout, chunk); });
+    child.stderr.on("data", (chunk) => { stderr = cap(stderr, chunk); });
+    const timer = setTimeout(() => { child.kill("SIGTERM"); setTimeout(() => child.kill("SIGKILL"), 5000).unref(); }, codexTimeoutMs);
+    child.once("error", (error) => { clearTimeout(timer); resolve({ ok: false, code: -1, stdout, stderr, error: safeError(error) }); });
+    child.once("close", (code, signal) => { clearTimeout(timer); resolve({ ok: code === 0, code: code ?? -1, signal: signal || "", stdout, stderr }); });
+  });
+}
+
+async function pendingItems() {
+  const client = await createMcpClient();
+  const payload = parseToolPayload(await client.getInbox());
+  return (payload.items || []).map(safeItem).filter((x) => x.id && forwardKinds.has(x.kind));
+}
+
+async function observeOnce() {
+  const state = await loadState();
+  const output = { fetched: false, pending: 0, candidate: null, codex_exit: null, acked: false, error: null };
+  let lockHandle = null;
+  try {
+    const items = await pendingItems();
+    output.fetched = true;
+    output.pending = items.length;
+    const now = Date.now();
+    const handled = new Set(state.handled_ids || []);
+    const candidate = items.find((x) => !handled.has(x.id) && Number(state.retry_after?.[x.id] || 0) <= now);
+    if (!candidate) return output;
+    output.candidate = { id: candidate.id, kind: candidate.kind };
+    try { lockHandle = await open(dispatchLockPath, "wx"); }
+    catch (e) { if (e?.code === "EEXIST") return { ...output, error: "busy" }; throw e; }
+
+    const run = await runCodex(candidate);
+    output.codex_exit = { ok: run.ok, code: run.code, signal: run.signal || "", final: String(run.stdout || "").trim().slice(-500) };
+    const after = await pendingItems();
+    const stillPending = after.some((x) => x.id === candidate.id);
+    output.acked = !stillPending;
+    if (run.ok && !stillPending) {
+      state.handled_ids.unshift(candidate.id);
+      state.handled_ids = [...new Set(state.handled_ids)].slice(0, 1000);
+      delete state.retry_after[candidate.id];
+      await saveState(state);
+    } else {
+      state.retry_after[candidate.id] = Date.now() + retrySeconds * 1000;
+      await saveState(state);
+      if (!run.ok) output.error = `codex_exit_${run.code}`;
+      else if (stillPending) output.error = "inbox_not_acked";
+    }
+    return output;
+  } catch (e) {
+    output.error = safeError(e);
+    return output;
+  } finally {
+    if (lockHandle) { await lockHandle.close().catch(() => {}); await unlink(dispatchLockPath).catch(() => {}); }
+    await log(output).catch(() => {});
+  }
+}
+
+async function main() {
+  const mode = parseMode(process.argv.slice(2));
+  if (!mode.watch) { console.log(JSON.stringify(await observeOnce())); return; }
+  while (true) {
+    console.log(JSON.stringify(await observeOnce()));
+    await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000));
+  }
+}
+
+main().catch((e) => { console.log(JSON.stringify({ error: safeError(e) })); process.exitCode = 1; });
