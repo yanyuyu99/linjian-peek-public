@@ -16,6 +16,7 @@ const pollSeconds = Math.max(5, Number(process.env.WORKFLOW_POLL_SECONDS || 8));
 const codexBin = process.env.CODEX_BIN || path.join(os.homedir(), ".local", "codex-cli", "bin", "codex");
 const codexTimeoutMs = Math.max(60_000, Number(process.env.WORKFLOW_CODEX_TIMEOUT_MS || 180_000));
 const retrySeconds = Math.max(30, Number(process.env.WORKFLOW_RETRY_SECONDS || 60));
+const heartbeatSeconds = Math.max(60, Number(process.env.WORKFLOW_HEARTBEAT_SECONDS || 900));
 const forwardKinds = new Set(String(process.env.WORKFLOW_FORWARD_KINDS || "reply_to_diary_annotation,companion_decision")
   .split(",").map((x) => x.trim()).filter(Boolean));
 
@@ -182,15 +183,22 @@ async function observeOnce() {
     return output;
   } finally {
     if (lockHandle) { await lockHandle.close().catch(() => {}); await unlink(dispatchLockPath).catch(() => {}); }
-    await log(output).catch(() => {});
+    if (output.candidate || output.error) await log(output).catch(() => {});
   }
 }
 
 async function main() {
   const mode = parseMode(process.argv.slice(2));
   if (!mode.watch) { console.log(JSON.stringify(await observeOnce())); return; }
+  let lastHeartbeatAt = 0;
   while (true) {
-    console.log(JSON.stringify(await observeOnce()));
+    const result = await observeOnce();
+    const now = Date.now();
+    const interesting = Boolean(result.candidate || result.error || result.pending > 0);
+    if (interesting || now - lastHeartbeatAt >= heartbeatSeconds * 1000) {
+      console.log(JSON.stringify(result));
+      if (!interesting) lastHeartbeatAt = now;
+    }
     await new Promise((resolve) => setTimeout(resolve, pollSeconds * 1000));
   }
 }
