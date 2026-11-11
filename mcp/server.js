@@ -2425,8 +2425,8 @@ app.get("/sse", async (_req, res) => {
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).end(String(err?.message || err)); }
 });
 app.post("/messages", async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`掌心窗 unified MCP listening on 0.0.0.0:${PORT}`);
+app.listen(PORT, HOST, () => {
+  console.log(`掌心窗 unified MCP listening on ${HOST}:${PORT}`);
   console.log(`LINJIAN_URL=${RAW_LINJIAN_URL || "<missing>"}`);
   if (LINJIAN_URL_CANDIDATES.length > 1) console.log(`LINJIAN_URL fallback candidates=${LINJIAN_URL_CANDIDATES.join(", ")}`);
 });
