@@ -2,7 +2,7 @@
   "latest_version_name": "0.3.10",
   "latest_version_code": 31000,
   "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.10/Zhangxinchuang-public-v0.3.10.apk",
-  "sha256": "",
+  "sha256": "52abfd4e1a36a045b561e1c517172f77d6a13e01fa8490e85613f63ef577610d",
   "required": false,
   "notes": [
     "新增「看见」回复闭环：截图可绑定回复，并可查看最近看见记录与回应。",
