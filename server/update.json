@@ -2,7 +2,7 @@
   "latest_version_name": "0.3.12",
   "latest_version_code": 31200,
   "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.12/Zhangxinchuang-public-v0.3.12.apk",
-  "sha256": "",
+  "sha256": "1755671b56660ace432c782b043839248e2ae79eec6bfe5d2a4aed925e8eec23",
   "required": false,
   "notes": [
     "远程命令轮询优先于生活状态上传，避免移动网络状态上传卡住 peek/noop 等实时命令。",
