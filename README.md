@@ -1,11 +1,21 @@
 # 掌心窗公开版 v0.3.10
 
+[下载 Android APK（v0.3.10）](https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.10/Zhangxinchuang-public-v0.3.10.apk) · [查看 GitHub Release](https://github.com/yanyuyu99/linjian-peek-public/releases/tag/v0.3.10)
+
+## v0.3.10 看见回复、闹钟铃声与 Workflow 闭环
+
+- 「看见」支持截图回复与最近记录；Android 详情卡可查看截图时间、回复人和内容。
+- 系统闹钟支持默认铃声、静音和指定系统铃声 URI。
+- Android 保存日记页边纸条后，会异步发送 `diary.annotation.created` Workflow 事件。
+- MCP 新增 `reply_peek`、`peek_history`；server 新增 `/api/peek/reply`、`/api/peek/history`。
+- 版本号：`0.3.10` / `31000`；保留公开版固定签名。
+
 ## v0.3.10 Workflow / Rules v1
 
 - 新增持久化事件规则、事件触发、条件、冷却、事件去重、运行记录和 Sol 收件箱。
 - 新增 MCP Workflow 管理工具；规则可发送通知或闹钟，也可把需要 Sol 判断的事件放入收件箱。
 - 后台规则执行锁定 App、结束/延长锁定、开启/结束全机 Focus、归电、打开 App 或息屏等高影响手机动作，必须由 `emit_workflow_event` 的独立 `explicit_consent=true` 参数明确授权。事件 JSON 载荷不能伪造该授权。
-- 内置刷手机规则只发温和通知并交给 Sol 判断，不会自动锁 App；日记页边纸条引擎已支持 `diary.annotation.created`，Android 本地批注事件仍需后续接线。
+- 内置刷手机规则只发温和通知并交给 Sol 判断，不会自动锁 App；Android 保存页边纸条后会自动 emit `diary.annotation.created`，进入 Workflow 规则与 Inbox。
 - `observer/` 提供本地 Workflow Inbox watcher。默认 dry-run；只有 `--live` 才会通过现有 cli-chat-bridge 唤醒 Sol。部署 server/MCP 后，请把 observer 放到 Solune 项目目录并按 [observer/README.md](observer/README.md) 配置。
 - 规则说明见 [docs/WORKFLOW_RULES_V1.md](docs/WORKFLOW_RULES_V1.md)。
 
@@ -167,7 +177,7 @@
 - 固定签名保持不变，可覆盖安装上一版公开版。
 
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/linzhi-524/linjian-peek-public)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/yanyuyu99/linjian-peek-public)
 
 
 掌心窗公开版是一个可自部署的 Android 陪伴窗：手机端负责展示、截图/读屏、通知、日历、门禁与息屏等本机能力；同步后端负责保存状态和下发指令；MCP 服务负责把这些能力暴露给 AI 客户端使用。
