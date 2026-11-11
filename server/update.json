@@ -1,22 +1,22 @@
 {
-  "latest_version_name": "0.3.11",
-  "latest_version_code": 31100,
-  "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.11/Zhangxinchuang-public-v0.3.11.apk",
-  "sha256": "ee6c7bff0755cb9b59dc9395fe6d050dd278a55fb13581673f331b4c2bc92be3",
+  "latest_version_name": "0.3.12",
+  "latest_version_code": 31200,
+  "apk_url": "https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.12/Zhangxinchuang-public-v0.3.12.apk",
+  "sha256": "",
   "required": false,
   "notes": [
-    "修复荣耀等系统切出掌心窗后远程命令轮询可能假死的问题：改为轮询心跳判断，不再只依赖 running 布尔值。",
-    "无障碍服务发现前台轮询心跳过期时会接管命令轮询，并尝试恢复前台服务。",
-    "保留 0.3.10 的「看见」回复闭环、闹钟铃声、日记 Workflow 事件与固定公开版签名。"
+    "远程命令轮询优先于生活状态上传，避免移动网络状态上传卡住 peek/noop 等实时命令。",
+    "Android 所有统一 POST 请求增加 7 秒连接超时与 10 秒读取超时，并确保连接释放。",
+    "保留 0.3.11 的轮询心跳与无障碍兜底恢复机制。"
   ],
   "changelog": [
-    "修复荣耀等系统切出掌心窗后远程命令轮询可能假死的问题：改为轮询心跳判断，不再只依赖 running 布尔值。",
-    "无障碍服务发现前台轮询心跳过期时会接管命令轮询，并尝试恢复前台服务。",
-    "保留 0.3.10 的「看见」回复闭环、闹钟铃声、日记 Workflow 事件与固定公开版签名。"
+    "远程命令轮询优先于生活状态上传，避免移动网络状态上传卡住 peek/noop 等实时命令。",
+    "Android 所有统一 POST 请求增加 7 秒连接超时与 10 秒读取超时，并确保连接释放。",
+    "保留 0.3.11 的轮询心跳与无障碍兜底恢复机制。"
   ],
   "release_notes": [
-    "修复荣耀等系统切出掌心窗后远程命令轮询可能假死的问题：改为轮询心跳判断，不再只依赖 running 布尔值。",
-    "无障碍服务发现前台轮询心跳过期时会接管命令轮询，并尝试恢复前台服务。",
-    "保留 0.3.10 的「看见」回复闭环、闹钟铃声、日记 Workflow 事件与固定公开版签名。"
+    "远程命令轮询优先于生活状态上传，避免移动网络状态上传卡住 peek/noop 等实时命令。",
+    "Android 所有统一 POST 请求增加 7 秒连接超时与 10 秒读取超时，并确保连接释放。",
+    "保留 0.3.11 的轮询心跳与无障碍兜底恢复机制。"
   ]
 }
