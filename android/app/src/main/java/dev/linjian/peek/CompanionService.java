@@ -76,7 +76,7 @@ public class CompanionService extends Service {
             DebugState.append(this, "服务启动失败：服务器地址或 Token 为空");
             stopSelf(); return START_NOT_STICKY;
         }
-        DebugState.append(this, "掌心窗公开版 v0.3.11 服务已启动，目标：" + serverUrl);
+        DebugState.append(this, "掌心窗公开版 v0.3.12 服务已启动，目标：" + serverUrl);
         if (!isPollingHealthy(this)) {
             if (pollThread != null) {
                 try { pollThread.quitSafely(); } catch (Exception ignored) { }
@@ -107,12 +107,17 @@ public class CompanionService extends Service {
         long now = System.currentTimeMillis();
         long delay = AppPrefs.interval(this);
         try {
-            uploadStateThrottled(serverUrl, token, this, false);
+            // 远程命令优先：状态上传即使网络变慢，也不能挡住 peek/noop/门禁等实时命令。
             if (rateLimitedUntilMs > now) {
                 delay = Math.max(delay, rateLimitedUntilMs - now);
             } else {
                 String body = pollServer();
                 if (body != null && body.length() > 0) handleCommandBody(this, body, serverUrl, token);
+            }
+            try {
+                uploadStateThrottled(serverUrl, token, this, false);
+            } catch (Exception stateError) {
+                DebugState.append(this, "状态上传异常（不阻塞命令轮询）：" + ScreenshotService.shortMsg(stateError));
             }
         } catch (Exception e) { DebugState.append(this, "轮询异常：" + ScreenshotService.shortMsg(e)); }
         markPollHeartbeat();
@@ -622,11 +627,23 @@ public class CompanionService extends Service {
     }
 
     private static String postJson(String urlStr, String token, JSONObject obj) throws Exception {
-        HttpURLConnection conn = (HttpURLConnection)new URL(urlStr).openConnection(); conn.setRequestMethod("POST"); conn.setRequestProperty("Content-Type", "application/json; charset=utf-8"); conn.setRequestProperty("X-Auth-Token", token); conn.setDoOutput(true);
-        byte[] data = obj.toString().getBytes(StandardCharsets.UTF_8); try (OutputStream os = conn.getOutputStream()) { os.write(data); }
-        InputStream is = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
-        ByteArrayOutputStream bos = new ByteArrayOutputStream(); if (is != null) { byte[] buf = new byte[1024]; int n; while ((n = is.read(buf)) > 0) bos.write(buf,0,n); }
-        return new String(bos.toByteArray(), "UTF-8");
+        HttpURLConnection conn = (HttpURLConnection)new URL(urlStr).openConnection();
+        conn.setConnectTimeout(7000);
+        conn.setReadTimeout(10000);
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+        conn.setRequestProperty("X-Auth-Token", token);
+        conn.setDoOutput(true);
+        try {
+            byte[] data = obj.toString().getBytes(StandardCharsets.UTF_8);
+            try (OutputStream os = conn.getOutputStream()) { os.write(data); }
+            InputStream is = conn.getResponseCode() >= 400 ? conn.getErrorStream() : conn.getInputStream();
+            ByteArrayOutputStream bos = new ByteArrayOutputStream();
+            if (is != null) { byte[] buf = new byte[1024]; int n; while ((n = is.read(buf)) > 0) bos.write(buf,0,n); }
+            return new String(bos.toByteArray(), "UTF-8");
+        } finally {
+            conn.disconnect();
+        }
     }
 
     private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationManager nm = getSystemService(NotificationManager.class); NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "掌心窗", NotificationManager.IMPORTANCE_LOW); channel.setDescription("掌心窗正在等待你授权的截图与手机动作请求"); nm.createNotificationChannel(channel); NotificationChannel reminder = new NotificationChannel(REMINDER_CHANNEL_ID, "掌心窗悬浮横幅提醒", NotificationManager.IMPORTANCE_HIGH); reminder.setDescription("来自掌心窗的悬浮横幅、生活提醒与回家模式"); reminder.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC); reminder.enableVibration(true); nm.createNotificationChannel(reminder); } }
