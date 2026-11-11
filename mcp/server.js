@@ -8,6 +8,7 @@ import path from "path";
 import { diagnosticResponseHeaders } from "./diagnostics.js";
 
 const PORT = Number(process.env.PORT || 8787);
+const HOST = (process.env.HOST || "0.0.0.0").trim() || "0.0.0.0";
 const RAW_LINJIAN_URL = (process.env.LINJIAN_URL || "").trim();
 
 function normalizeBaseUrl(value = "") {
