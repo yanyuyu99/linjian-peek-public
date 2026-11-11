@@ -66,7 +66,7 @@ import java.util.List;
 public class MainActivity extends Activity {
     private static final String PREF_A11Y_SETTINGS_OPENED_AT = "a11y_settings_opened_at";
     private static final long A11Y_CONFIRM_WINDOW_MS = 30000L;
-    private static final String DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/linzhi-524/linjian-peek-public/main/update.json";
+    private static final String DEFAULT_UPDATE_URL = "https://raw.githubusercontent.com/yanyuyu99/linjian-peek-public/main/update.json";
     private int latestVersionCode = AppPrefs.APP_VERSION_CODE;
     private String latestVersionName = AppPrefs.APP_VERSION_NAME;
     private String latestApkUrl = "";
