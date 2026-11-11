@@ -53,8 +53,8 @@ public class ScreenshotService extends AccessibilityService {
                 String url = prefs.getString(AppPrefs.KEY_SERVER, "");
                 String tk = prefs.getString(AppPrefs.KEY_TOKEN, "");
                 boolean userStopped = prefs.getBoolean("user_stopped", false);
-                if (!CompanionService.isRunning() && !userStopped && !url.isEmpty() && !tk.isEmpty()) {
-                    DebugState.append(ScreenshotService.this, "看门狗：尝试重启前台服务");
+                if (!CompanionService.isPollingHealthy(ScreenshotService.this) && !userStopped && !url.isEmpty() && !tk.isEmpty()) {
+                    DebugState.append(ScreenshotService.this, "看门狗：轮询心跳超时，尝试恢复前台服务");
                     Intent i = new Intent(ScreenshotService.this, CompanionService.class);
                     i.putExtra("server_url", url);
                     i.putExtra("token", tk);
@@ -74,7 +74,8 @@ public class ScreenshotService extends AccessibilityService {
                 String url = normalizeUrl(prefs.getString(AppPrefs.KEY_SERVER, ""));
                 String tk = prefs.getString(AppPrefs.KEY_TOKEN, "");
                 boolean userStopped = prefs.getBoolean("user_stopped", true);
-                if (!userStopped && !url.isEmpty() && !tk.isEmpty() && !CompanionService.isRunning()) {
+                if (!userStopped && !url.isEmpty() && !tk.isEmpty() && !CompanionService.isPollingHealthy(ScreenshotService.this)) {
+                    DebugState.append(ScreenshotService.this, "无障碍兜底：前台轮询心跳已过期，接管命令轮询");
                     String body = pollServerFromAccessibility(url, tk);
                     if (body != null && body.length() > 0) CompanionService.handleCommandBody(ScreenshotService.this, body, url, tk);
                 }
@@ -92,7 +93,7 @@ public class ScreenshotService extends AccessibilityService {
         super.onServiceConnected();
         instance = this;
         NowState.start(this);
-        DebugState.append(this, "无障碍服务已连接：截图/读屏/节点坐标/活动轨迹/远程息屏/专注模式可用 v0.3.10");
+        DebugState.append(this, "无障碍服务已连接：截图/读屏/节点坐标/活动轨迹/远程息屏/专注模式可用 v0.3.11");
         watchdog = new Handler(Looper.getMainLooper());
         watchdog.postDelayed(watchdogTick, 15000);
         startBackgroundPolling();
@@ -144,7 +145,7 @@ public class ScreenshotService extends AccessibilityService {
         backgroundPollThread = new HandlerThread("LinjianAccessibilityPoll");
         backgroundPollThread.start();
         backgroundPollHandler = new Handler(backgroundPollThread.getLooper());
-        DebugState.append(this, "无障碍兜底轮询已启动 v0.3.10（前台服务运行时不重复轮询）");
+        DebugState.append(this, "无障碍兜底轮询已启动 v0.3.11（前台服务运行时不重复轮询）");
         backgroundPollHandler.postDelayed(backgroundPollTick, 6000);
     }
 
