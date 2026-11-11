@@ -976,6 +976,17 @@ public class MainActivity extends Activity {
             if (text.isEmpty()) { Toast.makeText(this, "先写一点想留下的话", Toast.LENGTH_SHORT).show(); return; }
             JSONObject saved = DiaryState.addAnnotation(this, entry.optString("id", ""), paragraphIndex, quoteText, text, pickedMood[0], "margin_note", "user");
             if (!saved.optBoolean("ok", false)) { Toast.makeText(this, "保存失败：" + saved.optString("error", "请检查内容"), Toast.LENGTH_LONG).show(); return; }
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("book_id", saved.optString("book_id", entry.optString("book_id", "")));
+                payload.put("entry_id", saved.optString("entry_id", entry.optString("id", "")));
+                payload.put("annotation_id", saved.optString("annotation_id", ""));
+                payload.put("paragraph_index", paragraphIndex);
+                payload.put("quote_text", diaryClip(quoteText, 300));
+                payload.put("annotation_text", diaryClip(text, 500));
+                payload.put("mood", pickedMood[0]);
+                CompanionService.emitWorkflowEventAsync(this, "diary.annotation.created", payload, "diary-annotation:" + saved.optString("annotation_id", ""));
+            } catch (Exception ignored) { }
             dialog.dismiss(); Toast.makeText(this, "页边纸条已贴好", Toast.LENGTH_SHORT).show(); showDiaryDatePage(entry.optString("date", ""), entry.optString("id", ""));
         }));
         dialog.show();
