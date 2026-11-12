@@ -71,7 +71,7 @@ const ACTIVITY_TIMEOUT_MS = Number(process.env.LINJIAN_ACTIVITY_TIMEOUT_MS || 18
 const COMMAND_QUEUE_TIMEOUT_MS = Number(process.env.LINJIAN_COMMAND_QUEUE_TIMEOUT_MS || 4500);
 const COMMAND_STATUS_TIMEOUT_MS = Number(process.env.LINJIAN_COMMAND_STATUS_TIMEOUT_MS || 1500);
 const DEFAULT_COMMAND_WAIT_SECONDS = Number(process.env.LINJIAN_DEFAULT_COMMAND_WAIT_SECONDS || 5);
-const MAX_TOOL_WAIT_SECONDS = Number(process.env.LINJIAN_MAX_TOOL_WAIT_SECONDS || 12);
+const MAX_TOOL_WAIT_SECONDS = Number(process.env.LINJIAN_MAX_TOOL_WAIT_SECONDS || 20);
 
 const CARE_STATE_PATH = process.env.LINJIAN_CARE_STATE_PATH || path.join(process.cwd(), "care_state.json");
 const VISIT_STATE_PATH = process.env.LINJIAN_VISIT_STATE_PATH || path.join(process.cwd(), "visit_state.json");
@@ -855,12 +855,18 @@ async function waitCommand(id, seconds = DEFAULT_COMMAND_WAIT_SECONDS) {
   let last = null;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 700));
-    const remain = Math.max(500, Math.min(COMMAND_STATUS_TIMEOUT_MS, deadline - Date.now()));
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const remain = Math.max(250, Math.min(COMMAND_STATUS_TIMEOUT_MS, remainingMs));
     last = await commandStatus(id, remain).catch(() => last);
     const status = last?.command?.status;
     if (status === "completed" || status === "failed") return last;
   }
-  return last;
+
+  // A phone report can land right on the wait boundary. Do one final status read
+  // after the polling window so a just-completed command is not misreported as pending.
+  const finalStatus = await commandStatus(id, COMMAND_STATUS_TIMEOUT_MS).catch(() => null);
+  return finalStatus?.command ? finalStatus : last;
 }
 
 async function latestInfo() {
@@ -1991,6 +1997,20 @@ function makeServer() {
       .then((r) => r.json())
       .catch(() => ({ ok: true, apps: { "小红书": "com.xingin.xhs", "微信": "com.tencent.mm", "QQ": "com.tencent.mobileqq", "抖音": "com.ss.android.ugc.aweme" } }));
     return { content: [{ type: "text", text: JSON.stringify(res, null, 2) }] };
+  });
+
+  server.tool("get_command_status", "按 command_id 查询掌心窗手机命令的最终回执。用于工具先返回 pending/dispatched、但手机稍后才完成的情况；本工具只读，不会重复执行命令。", {
+    command_id: z.string().min(1).max(160)
+  }, async ({ command_id }) => {
+    const observed = await commandStatus(command_id, QUICK_FETCH_TIMEOUT_MS);
+    const command = observed?.command || null;
+    return textResult({
+      ok: Boolean(command),
+      command_id,
+      command,
+      phone_result: parsePhoneResult(command),
+      terminal: command?.status === "completed" || command?.status === "failed"
+    });
   });
 
   server.tool("send_phone_command", "发送手机控制命令。action 可用 open_app/home/back/recents/screen_off/turn_screen_off/lock_screen/tap/swipe/noop/set_alarm/send_notification/run_sequence/save_known_app/get_screen_nodes/tap_text/input_text，也可用 screen_break_app/end_screen_break/temporary_screen_break_release/extend_screen_break/get_screen_break_state 管理目标 App 的短时屏幕休息；还支持 get_focus_status/start_focus_mode/end_focus_mode/set_focus_plan 管理全机专注模式；还支持 get_guidian_state/set_guidian_config/trigger_guidian/mark_guidian_returned 归电动作。set_alarm 支持 hour+minute，或 minutes=几分钟后。", {
