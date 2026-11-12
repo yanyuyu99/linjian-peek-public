@@ -51,6 +51,15 @@ KNOWN_APPS = {
     "京东": "com.jingdong.app.mall", "jd": "com.jingdong.app.mall",
 }
 SENSITIVE_PACKAGES = {"com.eg.android.AlipayGphone", "com.tencent.mm.plugin.wallet"}
+USER_FACING_MESSAGE_ACTIONS = {
+    "send_notification", "set_alarm",
+    "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock",
+    "lock_app", "screen_break_app", "start_screen_break", "screen_break",
+    "temporary_unlock_app", "temporary_screen_break_release", "temporary_screen_release",
+    "extend_lock", "extend_screen_break",
+    "deny_unlock_request", "deny_screen_break_release_request", "deny_break_release_request",
+}
+
 ALLOWED_ACTIONS = {"noop", "peek", "open_app", "home", "back", "recents", "screen_off", "turn_screen_off", "lock_screen", "phone_screen_off", "tap", "swipe", "set_alarm", "send_notification", "run_sequence", "save_known_app", "get_screen_nodes", "tap_text", "input_text", "lock_app", "unlock_app", "temporary_unlock_app", "extend_lock", "deny_unlock_request", "get_lock_state", "set_emergency_passphrase", "add_locked_app", "remove_locked_app", "list_lockable_apps", "screen_break_app", "start_screen_break", "screen_break", "end_screen_break", "stop_screen_break", "temporary_screen_break_release", "temporary_screen_release", "extend_screen_break", "deny_screen_break_release_request", "deny_break_release_request", "get_screen_break_state", "set_screen_break_passphrase", "add_screen_break_app", "remove_screen_break_app", "list_screen_break_apps", "get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock", "request_focus_unlock", "create_focus_request", "get_guidian_state", "set_guidian_config", "trigger_guidian", "mark_guidian_returned", "get_calendar_state", "upsert_calendar_event", "add_calendar_event", "delete_calendar_event", "create_diary_book", "list_diary_books", "rename_diary_book", "update_diary_book_cover", "write_diary_entry", "list_diary_entries", "read_diary_entry", "read_diary_entry_with_annotations", "add_diary_annotation", "list_diary_annotations", "mark_diary_annotations_seen", "delete_diary_annotation", "search_diary_entries", "update_diary_entry", "delete_diary_entry", "delete_diary_book", "get_wallet_state", "get_wallet_month_state", "list_wallet_months", "add_wallet_record", "list_wallet_pending", "list_wallet_approvals", "list_companion_wallet_requests", "list_wallet_request_results", "submit_wallet_approval", "submit_companion_wallet_request", "decide_wallet_approval", "save_wallet_request_result", "update_wallet_request_result", "save_user_wallet_request_result", "edit_wallet_record", "update_wallet_record", "delete_wallet_record", "remove_wallet_record", "confirm_wallet_record", "get_wallet_rules", "set_wallet_rules", "wallet_approval_request", "get_takeout_state", "list_takeout_cards", "list_takeout_meals", "remember_takeout_meal", "remember_current_takeout_meal", "set_takeout_budget", "set_takeout_preferences", "add_takeout_card", "save_takeout_card", "update_takeout_card", "remove_takeout_card", "delete_takeout_card", "suggest_takeout_options", "create_takeout_plan", "takeout_wallet_request", "open_takeout_link", "open_takeout_plan", "copy_takeout_note", "record_takeout_order", "prepare_takeout_checkout", "auto_takeout_checkout", "get_takeout_checkout_status", "cancel_takeout_checkout"}
 
 
@@ -454,6 +463,10 @@ class State:
             self.peek_replies.insert(0, entry)
             del self.peek_replies[500:]
             self.save_peek_replies()
+        try:
+            self.update_whisper(content, entry.get("author") or "陪伴对象")
+        except Exception:
+            pass
         return dict(entry)
 
     def list_peek_history(self, limit: int = 20) -> list[dict]:
@@ -485,6 +498,38 @@ def package_for(app_name: str, package: str = "") -> str:
     if pkg: return pkg
     key = (app_name or "").strip()
     return KNOWN_APPS.get(key, KNOWN_APPS.get(key.lower(), ""))
+
+
+
+def whisper_text_from_completed_command(cmd: dict) -> str:
+    """Return only text that was actually presented to the user by a completed phone action."""
+    if not isinstance(cmd, dict) or cmd.get("status") != "completed":
+        return ""
+    action = str(cmd.get("action") or "").strip().lower()
+    payload = cmd.get("payload") if isinstance(cmd.get("payload"), dict) else {}
+
+    if action == "add_diary_annotation":
+        if str(payload.get("created_by") or "").strip().lower() != "companion":
+            return ""
+        return clip_text(str(payload.get("annotation_text") or ""), 240)
+
+    if action == "run_sequence":
+        steps = payload.get("steps")
+        if isinstance(steps, list):
+            for step in reversed(steps):
+                if not isinstance(step, dict):
+                    continue
+                step_action = str(step.get("action") or "").strip().lower()
+                if step_action in ("send_notification", "set_alarm"):
+                    text = clip_text(str(step.get("message") or ""), 240)
+                    if text:
+                        return text
+        return ""
+
+    if action in USER_FACING_MESSAGE_ACTIONS:
+        return clip_text(str(payload.get("message") or cmd.get("message") or ""), 240)
+
+    return ""
 
 
 def make_command(device_id: str, action: str, app: str = "", package: str = "", payload: dict | None = None) -> dict:
@@ -809,6 +854,12 @@ class Handler(BaseHTTPRequestHandler):
                     })
                 except Exception: pass
             if completed_cmd is not None:
+                try:
+                    whisper_text = whisper_text_from_completed_command(completed_cmd)
+                    if whisper_text:
+                        self.state.update_whisper(whisper_text, "陪伴对象")
+                except Exception:
+                    pass
                 try:
                     self.state.workflow_engine.emit_event("command.completed", {"command": completed_cmd, "report": data}, device_id=completed_cmd.get("device_id") or DEFAULT_DEVICE, source="phone", event_id=f"command:{cid}:completed")
                 except Exception:
