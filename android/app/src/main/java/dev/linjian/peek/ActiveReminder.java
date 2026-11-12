@@ -105,7 +105,7 @@ public class ActiveReminder {
                 if (cycle.optBoolean("is_period_now", false) && oncePerDayDue(p, "cycle_period", now)) {
                     notify(ctx, "掌心窗生理期提醒", AppPrefs.userName(ctx) + "，现在是" + cycle.optString("current_phase", "生理期") + "，今天慢一点，注意热敷和休息。", "cycle");
                 } else if (days >= 0 && days <= remindBefore && oncePerDayDue(p, "cycle_before", now)) {
-                    notify(ctx, "掌心窗生理期提醒", AppPrefs.userName(ctx) + "，预计还有 " + days + " 天来，少吃冰的，提前准备姨妈巾和热水袋。", "cycle");
+                    notify(ctx, "掌心窗生理期提醒", AppPrefs.userName(ctx) + "，预计还有 " + days + " 天来，少吃点冰的，提前把经期用品和热水袋准备好。", "cycle");
                 }
             }
 
