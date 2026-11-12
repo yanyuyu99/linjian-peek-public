@@ -2,6 +2,7 @@ package dev.linjian.peek;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.pm.ApplicationInfo;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -51,6 +52,10 @@ public class ActiveReminder {
             SharedPreferences p = AppPrefs.get(ctx);
             if (!p.getBoolean(AppPrefs.KEY_ACTIVE_REMINDERS, true)) return;
             long now = System.currentTimeMillis();
+
+            if (p.getBoolean(AppPrefs.KEY_RULE_SCREEN, true) && state.optBoolean("usage_permission_ready", false)) {
+                emitAppOveruseWorkflow(ctx, state, p, now);
+            }
 
             if (p.getBoolean(AppPrefs.KEY_RULE_BATTERY, true)) {
                 int battery = state.optInt("battery_percent", -1);
@@ -118,6 +123,74 @@ public class ActiveReminder {
             }
         } catch (Exception e) {
             DebugState.append(ctx, "主动提醒异常：" + ScreenshotService.shortMsg(e));
+        }
+    }
+
+    private static void emitAppOveruseWorkflow(Context ctx, JSONObject state, SharedPreferences p, long now) {
+        try {
+            JSONArray apps = state.optJSONArray("top_apps_today");
+            if (apps == null || apps.length() == 0) return;
+
+            final int stepMinutes = 20;
+            String today = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(new Date(now));
+            String dayKey = PREFIX + "workflow_overuse_day";
+            boolean initializingDay = !today.equals(p.getString(dayKey, ""));
+
+            SharedPreferences.Editor editor = p.edit();
+            for (int i = 0; i < apps.length(); i++) {
+                JSONObject item = apps.optJSONObject(i);
+                if (item == null) continue;
+                String pkg = item.optString("package", "").trim();
+                String appName = item.optString("app", pkg).trim();
+                int minutes = Math.max(0, item.optInt("minutes", 0));
+                if (!trackableOveruseApp(ctx, pkg)) continue;
+
+                int bucket = minutes / stepMinutes;
+                String suffix = Integer.toHexString(pkg.hashCode());
+                String dateKey = PREFIX + "workflow_overuse_date_" + suffix;
+                String bucketKey = PREFIX + "workflow_overuse_bucket_" + suffix;
+
+                if (initializingDay) {
+                    editor.putString(dateKey, today);
+                    editor.putInt(bucketKey, bucket);
+                    continue;
+                }
+
+                String previousDate = p.getString(dateKey, "");
+                int previousBucket = today.equals(previousDate) ? p.getInt(bucketKey, 0) : 0;
+                if (bucket >= 1 && bucket > previousBucket) {
+                    JSONObject payload = new JSONObject();
+                    payload.put("app_name", appName.isEmpty() ? pkg : appName);
+                    payload.put("package", pkg);
+                    payload.put("minutes", minutes);
+                    payload.put("threshold_minutes", stepMinutes);
+                    payload.put("milestone_minutes", bucket * stepMinutes);
+                    CompanionService.emitWorkflowEventAsync(
+                        ctx,
+                        "app.overuse.detected",
+                        payload,
+                        "app-overuse:" + today + ":" + pkg + ":" + bucket
+                    );
+                    DebugState.append(ctx, "Workflow 原生事件 app.overuse.detected：" + (appName.isEmpty() ? pkg : appName) + " " + minutes + " 分钟");
+                }
+                editor.putString(dateKey, today);
+                editor.putInt(bucketKey, bucket);
+            }
+            editor.putString(dayKey, today).apply();
+        } catch (Exception e) {
+            DebugState.append(ctx, "App 过度使用 Workflow 事件异常：" + ScreenshotService.shortMsg(e));
+        }
+    }
+
+    private static boolean trackableOveruseApp(Context ctx, String pkg) {
+        if (ctx == null || pkg == null || pkg.trim().isEmpty()) return false;
+        String target = pkg.trim();
+        if (target.equals(ctx.getPackageName()) || "com.android.systemui".equals(target)) return false;
+        try {
+            ApplicationInfo info = ctx.getPackageManager().getApplicationInfo(target, 0);
+            return (info.flags & ApplicationInfo.FLAG_SYSTEM) == 0;
+        } catch (Exception e) {
+            return true;
         }
     }
 
