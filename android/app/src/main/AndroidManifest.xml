@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="dev.linjian.peek"
-    android:versionCode="31401"
-    android:versionName="0.3.14.1">
+    android:versionCode="31402"
+    android:versionName="0.3.14.2">
 
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="34" />
 
