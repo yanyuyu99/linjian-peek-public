@@ -6,6 +6,7 @@ import { z } from "zod";
 import fs from "fs";
 import path from "path";
 import { diagnosticResponseHeaders } from "./diagnostics.js";
+import { createBearerAuthMiddleware } from "./auth.js";
 
 const PORT = Number(process.env.PORT || 8787);
 const HOST = (process.env.HOST || "0.0.0.0").trim() || "0.0.0.0";
@@ -51,6 +52,8 @@ function effectiveLinjianUrl() {
   return activeLinjianUrl || LINJIAN_URL_CANDIDATES[0] || "";
 }
 const LINJIAN_TOKEN = process.env.LINJIAN_TOKEN || "";
+const MCP_ACCESS_TOKEN = (process.env.MCP_ACCESS_TOKEN || "").trim();
+const requireMcpAuth = createBearerAuthMiddleware(MCP_ACCESS_TOKEN);
 const DEFAULT_DEVICE = process.env.LINJIAN_DEFAULT_DEVICE || "android-phone";
 
 // v0.3.6.6：公开 MCP 经常被平台限制在 20 秒内返回。
@@ -2345,9 +2348,7 @@ app.get("/health", (_req, res) => res.json({
   version: "0.3.10",
   has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
   has_token: Boolean(LINJIAN_TOKEN),
-  configured_linjian_url: RAW_LINJIAN_URL || "",
-  effective_linjian_url: effectiveLinjianUrl(),
-  fallback_linjian_urls: LINJIAN_URL_CANDIDATES.filter((u) => u !== RAW_LINJIAN_URL),
+  mcp_auth_configured: Boolean(MCP_ACCESS_TOKEN),
   guardian_day_tools: true,
   diary_tools: true,
   diary_rename_fix: true,
@@ -2391,7 +2392,7 @@ function sanitizeMcpRequestBody(body) {
   return sanitizeMcpInitializeMessage(body);
 }
 
-app.post("/mcp", async (req, res) => {
+app.post("/mcp", requireMcpAuth, async (req, res) => {
   try {
     const server = makeServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -2404,8 +2405,8 @@ app.post("/mcp", async (req, res) => {
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null });
   }
 });
-app.get("/mcp", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
-app.post("/mcp-wallet", async (req, res) => {
+app.get("/mcp", requireMcpAuth, (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp for Streamable HTTP MCP." }));
+app.post("/mcp-wallet", requireMcpAuth, async (req, res) => {
   try {
     const server = makeWalletTakeoutServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
@@ -2418,13 +2419,13 @@ app.post("/mcp-wallet", async (req, res) => {
     if (!res.headersSent) res.status(500).json({ jsonrpc: "2.0", error: { code: -32603, message: String(err?.message || err) }, id: null });
   }
 });
-app.get("/mcp-wallet", (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet for wallet/takeout Streamable HTTP MCP.", endpoint: "/mcp-wallet" }));
+app.get("/mcp-wallet", requireMcpAuth, (_req, res) => res.status(405).json({ ok: false, error: "Use POST /mcp-wallet for wallet/takeout Streamable HTTP MCP.", endpoint: "/mcp-wallet" }));
 const sseTransports = new Map();
-app.get("/sse", async (_req, res) => {
+app.get("/sse", requireMcpAuth, async (_req, res) => {
   try { const transport = new SSEServerTransport("/messages", res); sseTransports.set(transport.sessionId, transport); res.on("close", () => { sseTransports.delete(transport.sessionId); transport.close(); }); await makeServer().connect(transport); }
   catch (err) { console.error(err); if (!res.headersSent) res.status(500).end(String(err?.message || err)); }
 });
-app.post("/messages", async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
+app.post("/messages", requireMcpAuth, async (req, res) => { const sessionId = req.query.sessionId; const transport = sseTransports.get(sessionId); if (!transport) return res.status(404).send("No SSE transport for sessionId"); await transport.handlePostMessage(req, res, req.body); });
 app.listen(PORT, HOST, () => {
   console.log(`掌心窗 unified MCP listening on ${HOST}:${PORT}`);
   console.log(`LINJIAN_URL=${RAW_LINJIAN_URL || "<missing>"}`);
