@@ -136,7 +136,7 @@ public class MainActivity extends Activity {
         loadSettings();
         NowState.start(this);
 
-        DebugState.append(this, "掌心窗公开版 v0.3.13 已打开");
+        DebugState.append(this, "掌心窗公开版 v0.3.14 已打开");
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, 13);
         serviceRunning = CompanionService.isRunning();
         updateUI();
@@ -924,7 +924,23 @@ public class MainActivity extends Activity {
                     JSONObject note = notes.optJSONObject(j); if (note == null) continue;
                     block.addView(buildDiaryNotePreview(note), matchWrapTop(7));
                 }
-                if (notes.length() > 2) { TextView more = label("还有 " + (notes.length() - 2) + " 张，轻点纸条查看", 8); more.setTextColor(Color.parseColor("#B17286")); block.addView(more, matchWrapTop(5)); }
+                if (notes.length() > 2) {
+                    TextView more = label("还有 " + (notes.length() - 2) + " 张，轻点展开", 8);
+                    more.setTextColor(Color.parseColor("#B17286"));
+                    more.setPadding(dp(2), dp(6), dp(2), dp(6));
+                    more.setClickable(true);
+                    more.setFocusable(true);
+                    more.setContentDescription("展开剩余 " + (notes.length() - 2) + " 张页边纸条");
+                    more.setOnClickListener(v -> {
+                        for (int k = 2; k < notes.length(); k++) {
+                            JSONObject hiddenNote = notes.optJSONObject(k);
+                            if (hiddenNote == null) continue;
+                            block.addView(buildDiaryNotePreview(hiddenNote), matchWrapTop(7));
+                        }
+                        more.setVisibility(View.GONE);
+                    });
+                    block.addView(more, matchWrapTop(5));
+                }
             }
             LinearLayout.LayoutParams lp = matchWrapTop(i == 0 ? 0 : 9); wrap.addView(block, lp);
         }
@@ -2496,7 +2512,7 @@ public class MainActivity extends Activity {
         getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", false).apply(); requestIgnoreBatteryOptimization();
         Intent intent = new Intent(this, CompanionService.class); intent.putExtra("server_url", url); intent.putExtra("token", token);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent); else startService(intent);
-        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.13 右侧 love 线稿花枝已启用"); serviceRunning = true; updateUI();
+        DebugState.append(this, "已请求启动前台服务：公开版 v0.3.14 右侧 love 线稿花枝已启用"); serviceRunning = true; updateUI();
     }
 
     private void stopCompanionService() { getSharedPreferences(AppPrefs.PREFS, MODE_PRIVATE).edit().putBoolean("user_stopped", true).apply(); stopService(new Intent(this, CompanionService.class)); DebugState.append(this, "已停止服务"); serviceRunning = false; updateUI(); }
@@ -2572,7 +2588,7 @@ public class MainActivity extends Activity {
                     text = out.toString();
                 }
             } catch (Exception e) {
-                text = "读取失败：" + ScreenshotService.shortMsg(e) + "\n\n可以先确认掌心窗 server 已更新到 0.3.13。";
+                text = "读取失败：" + ScreenshotService.shortMsg(e) + "\n\n可以先确认掌心窗 server 已更新到 0.3.14。";
             } finally {
                 if (connection != null) connection.disconnect();
             }
