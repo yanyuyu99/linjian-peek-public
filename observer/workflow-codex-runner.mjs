@@ -14,6 +14,8 @@ const dispatchLockPath = path.join(scriptDir, ".workflow-codex-runner.lock");
 const mcpUrl = process.env.LINJIAN_MCP_URL || "http://127.0.0.1:18797/mcp";
 const pollSeconds = Math.max(5, Number(process.env.WORKFLOW_POLL_SECONDS || 8));
 const codexBin = process.env.CODEX_BIN || path.join(os.homedir(), ".local", "codex-cli", "bin", "codex");
+const codexModel = process.env.WORKFLOW_CODEX_MODEL || "gpt-5.6-sol";
+const codexReasoningEffort = process.env.WORKFLOW_CODEX_REASONING_EFFORT || "low";
 const codexTimeoutMs = Math.max(60_000, Number(process.env.WORKFLOW_CODEX_TIMEOUT_MS || 180_000));
 const retrySeconds = Math.max(30, Number(process.env.WORKFLOW_RETRY_SECONDS || 60));
 const heartbeatSeconds = Math.max(60, Number(process.env.WORKFLOW_HEARTBEAT_SECONDS || 900));
@@ -126,7 +128,16 @@ function wakePrompt(item) {
 
 async function runCodex(item) {
   return await new Promise((resolve) => {
-    const args = ["exec", "--ephemeral", "--skip-git-repo-check", "--approve-for-me", "-C", projectDir, wakePrompt(item)];
+    const args = [
+      "exec",
+      "--ephemeral",
+      "--skip-git-repo-check",
+      "--approve-for-me",
+      "-m", codexModel,
+      "-c", 'model_reasoning_effort="' + codexReasoningEffort + '"',
+      "-C", projectDir,
+      wakePrompt(item)
+    ];
     const child = spawn(codexBin, args, { cwd: projectDir, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
