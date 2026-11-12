@@ -14,7 +14,7 @@ const dispatchLockPath = path.join(scriptDir, ".workflow-inbox-forward.lock");
 const bridgeDir = process.env.CLI_BRIDGE_DIR || path.join(os.homedir(), ".cli-bridge");
 const endpointPath = process.env.CLI_BRIDGE_ENDPOINT || path.join(bridgeDir, "daemon-endpoint.json");
 const accountPath = process.env.CLI_BRIDGE_ACCOUNT || path.join(bridgeDir, "account.json");
-const mcpUrl = process.env.LINJIAN_MCP_URL || "https://zhangxinchuang-mcp-47uz.onrender.com/mcp";
+const mcpUrl = process.env.LINJIAN_MCP_URL || "http://127.0.0.1:18797/mcp";
 const pollSeconds = Math.max(3, Number(process.env.WORKFLOW_POLL_SECONDS || 8));
 const forwardKinds = new Set(
   String(process.env.WORKFLOW_FORWARD_KINDS || "reply_to_diary_annotation,companion_decision")
