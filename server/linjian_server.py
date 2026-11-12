@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import hmac
 import os
 import subprocess
 import sys
@@ -536,9 +537,8 @@ class Handler(BaseHTTPRequestHandler):
         self._send_bytes(code, json.dumps(payload, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
     def _token_ok(self) -> bool:
-        qs = parse_qs(urlparse(self.path).query)
-        supplied = self.headers.get("X-Auth-Token", "") or qs.get("token", [""])[0]
-        return bool(self.state.token) and supplied == self.state.token
+        supplied = self.headers.get("X-Auth-Token", "")
+        return bool(self.state.token) and bool(supplied) and hmac.compare_digest(supplied, self.state.token)
 
     def _require_token(self) -> bool:
         if self._token_ok(): return True
@@ -565,7 +565,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         qs = parse_qs(parsed.query)
         if path in ("/", "/health"):
-            self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "tools": sorted(ALLOWED_ACTIONS), "guidian": True, "calendar": True, "diary": True, "diary_storage": "phone_local", "app_gate": True, "focus_tools": True, "diary_rename_fix": True, "diary_write_fallback": True, "diary_annotation_tools": True, "diary_annotation_whitelist_fix": True, "workflow_rules": True, "workflow_version": WORKFLOW_VERSION})
+            self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "auth_required": True})
             return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
@@ -658,6 +658,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._require_token(): return
             self._json(200, {"ok": True, "requests": self.state.unlock_requests[-50:]}); return
         if path == "/api/known_apps":
+            if not self._require_token(): return
             self._json(200, {"ok": True, "apps": KNOWN_APPS}); return
         self._json(404, {"ok": False, "error": ERR_BAD_METHOD})
 
