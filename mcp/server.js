@@ -53,7 +53,14 @@ function effectiveLinjianUrl() {
 }
 const LINJIAN_TOKEN = process.env.LINJIAN_TOKEN || "";
 const MCP_ACCESS_TOKEN = (process.env.MCP_ACCESS_TOKEN || "").trim();
-const requireMcpAuth = createBearerAuthMiddleware(MCP_ACCESS_TOKEN);
+const MCP_PUBLIC_DISABLED = /^(1|true|yes|on)$/i.test((process.env.MCP_PUBLIC_DISABLED || "").trim());
+const bearerMcpAuth = createBearerAuthMiddleware(MCP_ACCESS_TOKEN);
+const requireMcpAuth = (req, res, next) => {
+  if (MCP_PUBLIC_DISABLED) {
+    return res.status(403).json({ ok: false, error: "MCP public endpoint disabled" });
+  }
+  return bearerMcpAuth(req, res, next);
+};
 const DEFAULT_DEVICE = process.env.LINJIAN_DEFAULT_DEVICE || "android-phone";
 
 // v0.3.6.6：公开 MCP 经常被平台限制在 20 秒内返回。
@@ -2346,29 +2353,8 @@ app.get("/health", (_req, res) => res.json({
   ok: true,
   service: "linjian-public-mcp",
   version: "0.3.10",
-  has_url: Boolean(LINJIAN_URL_CANDIDATES.length),
-  has_token: Boolean(LINJIAN_TOKEN),
-  mcp_auth_configured: Boolean(MCP_ACCESS_TOKEN),
-  guardian_day_tools: true,
-  diary_tools: true,
-  diary_rename_fix: true,
-  diary_write_fallback: true,
-  diary_storage: "phone_local",
-  diary_annotation_tools: true,
-  diary_annotation_ui: "margin_notes",
-  focus_tools: true,
-  workflow_rules: true,
-  workflow_version: "1.0",
-  peek_reply_tools: true,
-  peek_reply_tool_names: ["reply_peek", "peek_history"],
-  focus_tool_names: ["get_focus_status", "start_focus_mode", "end_focus_mode", "set_focus_plan", "reply_focus_request", "approve_focus_unlock", "deny_focus_unlock"],
-  mcp_wallet_endpoint: "/mcp-wallet",
-  schema_exposure_fix: true,
-  focus_schema_exposure_fix: true,
-  priority_tool: "wallet_takeout_action",
-  wallet_takeout_tool_count: WALLET_TAKEOUT_ACTIONS.size,
-  wallet_takeout_tools: Array.from(WALLET_TAKEOUT_ACTIONS),
-  stability_note: "v0.3.10：普通 /mcp 已暴露 reply_peek 与 peek_history；保留 wallet_takeout_action 统一入口、/mcp-wallet 专用端点和前置专注模式工具，兼容部分客户端工具列表截断问题。"
+  mcp_public_disabled: MCP_PUBLIC_DISABLED,
+  mcp_auth_configured: Boolean(MCP_ACCESS_TOKEN)
 }));
 
 // Some third-party MCP clients send non-standard experimental capability flags during
