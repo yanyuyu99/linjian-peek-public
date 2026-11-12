@@ -397,6 +397,11 @@ class State:
             self.save_companion_state()
             return whisper
 
+    def automatic_whisper_author(self) -> str:
+        with self.companion_lock:
+            author = clip_text(str((self.companion_state.get("whisper") or {}).get("author") or ""), 24)
+        return author if author and author != "用户" else "陪伴对象"
+
     def record_companion_action(self, data: dict) -> dict:
         with self.companion_lock:
             entry = {
@@ -857,7 +862,7 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     whisper_text = whisper_text_from_completed_command(completed_cmd)
                     if whisper_text:
-                        self.state.update_whisper(whisper_text, "陪伴对象")
+                        self.state.update_whisper(whisper_text, self.state.automatic_whisper_author())
                 except Exception:
                     pass
                 try:
