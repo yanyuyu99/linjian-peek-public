@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import calendar
+import hashlib
 import json
 import hmac
 import os
@@ -39,6 +40,18 @@ ERR_NO_IMAGE = "LINJIAN_ERR_NO_IMAGE"
 ERR_TOO_LARGE = "LINJIAN_ERR_TOO_LARGE"
 ERR_NOT_FOUND = "LINJIAN_ERR_NOT_FOUND"
 ERR_BAD_METHOD = "LINJIAN_ERR_BAD_METHOD"
+MOON_GATEWAY_TOKEN_PATH = Path(os.environ.get(
+    "MOON_GATEWAY_TOKEN_PATH",
+    str(Path.home() / ".config" / "moon-gateway" / "token"),
+))
+MOON_GATEWAY_UPSTREAM = os.environ.get(
+    "MOON_GATEWAY_UPSTREAM",
+    "http://127.0.0.1:8788",
+).rstrip("/")
+MOON_PAIR_STATE_PATH = Path(os.environ.get(
+    "MOON_PAIR_STATE_PATH",
+    str(Path.home() / ".config" / "moon-gateway" / "pair.json"),
+))
 
 KNOWN_APPS = {
     "小红书": "com.xingin.xhs", "xhs": "com.xingin.xhs", "xiaohongshu": "com.xingin.xhs",
@@ -594,6 +607,140 @@ class Handler(BaseHTTPRequestHandler):
         if self._token_ok(): return True
         self._json(403, {"ok": False, "error": ERR_BAD_TOKEN}); return False
 
+    def _moon_token_value(self) -> str:
+        try:
+            return MOON_GATEWAY_TOKEN_PATH.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+
+    def _moon_token_ok(self) -> bool:
+        expected = self._moon_token_value()
+        supplied = self.headers.get("X-Moon-Token", "")
+        return bool(expected) and bool(supplied) and hmac.compare_digest(supplied, expected)
+
+    def _require_moon_token(self) -> bool:
+        if self._moon_token_ok():
+            return True
+        self._json(403, {"ok": False, "error": "MOON_ERR_BAD_TOKEN"})
+        return False
+
+    def _moon_health(self) -> None:
+        if not self._require_moon_token():
+            return
+        try:
+            req = Request(MOON_GATEWAY_UPSTREAM + "/health", method="GET")
+            with urlopen(req, timeout=5) as resp:
+                body = resp.read(64 * 1024)
+                self._send_bytes(
+                    int(getattr(resp, "status", 200) or 200),
+                    body,
+                    resp.headers.get("Content-Type", "application/json; charset=utf-8"),
+                )
+        except Exception:
+            self._json(502, {"ok": False, "error": "MOON_ERR_UPSTREAM_UNAVAILABLE"})
+
+    def _moon_pair(self) -> None:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length <= 0 or length > 4096:
+            self._json(400, {"ok": False, "error": "MOON_PAIR_BAD_BODY"})
+            return
+        try:
+            raw = self.rfile.read(length)
+            data = json.loads(raw.decode("utf-8"))
+            code = str(data.get("code") or "").strip()
+        except Exception:
+            self._json(400, {"ok": False, "error": "MOON_PAIR_BAD_BODY"})
+            return
+        if not code:
+            self._json(400, {"ok": False, "error": "MOON_PAIR_CODE_REQUIRED"})
+            return
+
+        try:
+            state = json.loads(MOON_PAIR_STATE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            self._json(410, {"ok": False, "error": "MOON_PAIR_NOT_ACTIVE"})
+            return
+
+        expires_at = float(state.get("expires_at") or 0)
+        if expires_at <= time.time():
+            try:
+                MOON_PAIR_STATE_PATH.unlink()
+            except Exception:
+                pass
+            self._json(410, {"ok": False, "error": "MOON_PAIR_EXPIRED"})
+            return
+
+        supplied_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+        expected_hash = str(state.get("code_sha256") or "")
+        if not expected_hash or not hmac.compare_digest(supplied_hash, expected_hash):
+            self._json(403, {"ok": False, "error": "MOON_PAIR_BAD_CODE"})
+            return
+
+        token = self._moon_token_value()
+        if not token:
+            self._json(503, {"ok": False, "error": "MOON_TOKEN_UNAVAILABLE"})
+            return
+
+        try:
+            MOON_PAIR_STATE_PATH.unlink()
+        except Exception:
+            pass
+
+        self._json(200, {
+            "ok": True,
+            "token": token,
+            "gateway_base": self._public_base() + "/moon-gateway",
+        })
+
+    def _moon_chat(self) -> None:
+        if not self._require_moon_token():
+            return
+
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length <= 0 or length > 64 * 1024:
+            self._json(400, {"ok": False, "error": "MOON_ERR_BAD_BODY"})
+            return
+        raw = self.rfile.read(length)
+
+        try:
+            req = Request(
+                MOON_GATEWAY_UPSTREAM + "/chat",
+                data=raw,
+                method="POST",
+                headers={
+                    "Content-Type": "application/json; charset=utf-8",
+                    "Accept": "text/event-stream",
+                },
+            )
+            with urlopen(req, timeout=130) as resp:
+                self.send_response(int(getattr(resp, "status", 200) or 200))
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache, no-transform")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("Connection", "close")
+                self.end_headers()
+
+                while True:
+                    line = resp.readline()
+                    if not line:
+                        break
+                    self.wfile.write(line)
+                    self.wfile.flush()
+                self.close_connection = True
+        except Exception as exc:
+            if not self.wfile.closed:
+                try:
+                    payload = json.dumps(
+                        {"message": "moon gateway upstream unavailable"},
+                        ensure_ascii=False,
+                    ).encode("utf-8")
+                    self.wfile.write(("event: error" + chr(10)).encode("ascii"))
+                    self.wfile.write(b"data: " + payload + (chr(10) * 2).encode("ascii"))
+                    self.wfile.flush()
+                except Exception:
+                    pass
+            self.close_connection = True
+
     def _read_json(self) -> dict:
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length <= 0: return {}
@@ -616,6 +763,9 @@ class Handler(BaseHTTPRequestHandler):
         qs = parse_qs(parsed.query)
         if path in ("/", "/health"):
             self._json(200, {"ok": True, "service": "linjian-public", "name": "掌心窗", "version": VERSION, "auth_required": True})
+            return
+        if path == "/moon-gateway/health":
+            self._moon_health()
             return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
@@ -714,6 +864,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = urlparse(self.path).path
+        if path == "/moon-gateway/pair":
+            self._moon_pair()
+            return
+        if path == "/moon-gateway/chat":
+            self._moon_chat()
+            return
         if path in ("/mcp", "/sse"):
             self._json(400, {"ok": False, "error": "LINJIAN_ERR_WRONG_SERVICE", "message": "你访问的是掌心窗 server 服务，不是 MCP 服务。请单独部署 mcp 目录，并在 MCP 客户端填写 MCP 服务域名 + /mcp 或 /sse。"})
             return
