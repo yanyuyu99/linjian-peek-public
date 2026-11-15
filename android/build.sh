@@ -3,6 +3,7 @@ set -e
 
 export JAVA_HOME=${JAVA_HOME:-/usr/lib/jvm/java-17-openjdk-amd64}
 export ANDROID_HOME=${ANDROID_HOME:-$HOME/android-sdk}
+export PATH="$JAVA_HOME/bin:$PATH"
 PLATFORM=$ANDROID_HOME/platforms/android-34/android.jar
 BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0
 
@@ -49,7 +50,7 @@ mv app.tmp.apk app.unsigned.apk
 
 echo "=== Loading fixed PUBLIC signing key ==="
 PUBLIC_KS=$PROJECT/signing/zhangxinchuang-public-release.p12
-PUBLIC_KS_PASSWORD=${PUBLIC_KS_PASSWORD:-zhangxinchuang-public-30600}
+if [ -z "$PUBLIC_KS_PASSWORD" ]; then echo "Set PUBLIC_KS_PASSWORD in the environment; no built-in fallback exists"; exit 1; fi
 if [ ! -f "$PUBLIC_KS" ]; then
     echo "Public release keystore not found: $PUBLIC_KS"
     exit 1
@@ -62,18 +63,18 @@ echo "=== Signing public APK ==="
 $BUILD_TOOLS/apksigner sign \
     --ks "$PUBLIC_KS" \
     --ks-type PKCS12 \
-    --ks-pass pass:"$PUBLIC_KS_PASSWORD" \
-    --key-pass pass:"$PUBLIC_KS_PASSWORD" \
+    --ks-pass env:PUBLIC_KS_PASSWORD \
+    --key-pass env:PUBLIC_KS_PASSWORD \
     --ks-key-alias zhangxinchuang-public \
-    --out "$PROJECT/Zhangxinchuang-public-v0.3.14.apk" \
+    --out "$PROJECT/Zhangxinchuang-public-v0.3.14.1.apk" \
     app.aligned.apk
 
 echo "=== Verifying fixed public signature ==="
-VERIFY_OUTPUT=$($BUILD_TOOLS/apksigner verify --verbose --print-certs "$PROJECT/Zhangxinchuang-public-v0.3.14.apk")
+VERIFY_OUTPUT=$($BUILD_TOOLS/apksigner verify --verbose --print-certs "$PROJECT/Zhangxinchuang-public-v0.3.14.1.apk")
 echo "$VERIFY_OUTPUT"
 echo "$VERIFY_OUTPUT" | grep -qi "aea75c9b2b5f5c42d56b72d4a69a79a38e1c57f27db021017be8656bc8f002fb"
 
 echo ""
 echo "=== Done ==="
-echo "APK: $PROJECT/Zhangxinchuang-public-v0.3.14.apk"
-ls -lh "$PROJECT/Zhangxinchuang-public-v0.3.14.apk"
+echo "APK: $PROJECT/Zhangxinchuang-public-v0.3.14.1.apk"
+ls -lh "$PROJECT/Zhangxinchuang-public-v0.3.14.1.apk"

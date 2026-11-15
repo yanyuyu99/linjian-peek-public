@@ -104,6 +104,9 @@ public class MainActivity extends Activity {
     private static final int REQ_DIARY_COVER = 230724;
     private static final int REQ_DIARY_EXPORT = 230725;
     private static final int REQ_DIARY_IMPORT = 230726;
+    private static final int REQ_PRIVATE_MIGRATION_EXPORT = 230727;
+    private static final int REQ_PRIVATE_MIGRATION_IMPORT = 230728;
+    private char[] pendingMigrationPassphrase;
     private static boolean openingShownForProcess = false;
     private SoftAvatarView companionAvatarView;
     private ImageView companionRestArt;
@@ -252,7 +255,7 @@ public class MainActivity extends Activity {
         if (settings != null) {
             for (int i = settings.getChildCount() - 1; i >= 0; i--) {
                 Object tag = settings.getChildAt(i).getTag();
-                if ("dynamic_privacy".equals(tag) || "dynamic_diary_backup".equals(tag)) settings.removeViewAt(i);
+                if ("dynamic_privacy".equals(tag) || "dynamic_diary_backup".equals(tag) || "dynamic_private_migration".equals(tag)) settings.removeViewAt(i);
             }
             settings.setPadding(0, 0, 0, dp(42));
             Button privacyButton = actionButton("隐私与记录  ›", false);
@@ -299,6 +302,23 @@ public class MainActivity extends Activity {
             bindDrawer(diaryBackupButton, diaryBackup, "日记本备份");
             settings.addView(diaryBackupButton, 2, marginBottom(8));
             settings.addView(diaryBackup, 3, marginBottom(8));
+
+            Button migrationButton = actionButton("私人版迁移  ›", false);
+            migrationButton.setTag("dynamic_private_migration");
+            LinearLayout migration = cardColumn();
+            migration.setTag("dynamic_private_migration");
+            migration.setVisibility(View.GONE);
+            migration.addView(title("私人版迁移", 15));
+            migration.addView(body("旧版先导出加密迁移包，私人版再导入。迁移包包含日记、钱包、日历、服务器连接和稳定设置；不搬无障碍/通知等系统权限、调试缓存、临时门禁状态和本机图片授权。迁移码只在手机本地生成，不上传服务器。", 9), matchWrapTop(6));
+            Button exportMigration = actionButton("导出加密迁移包", false);
+            exportMigration.setOnClickListener(v -> startPrivateMigrationExport());
+            Button importMigration = actionButton("导入加密迁移包", false);
+            importMigration.setOnClickListener(v -> choosePrivateMigrationImport());
+            migration.addView(exportMigration, matchWrapTop(9));
+            migration.addView(importMigration, matchWrapTop(6));
+            bindDrawer(migrationButton, migration, "私人版迁移");
+            settings.addView(migrationButton, 4, marginBottom(8));
+            settings.addView(migration, 5, marginBottom(8));
         }
     }
 
@@ -2442,6 +2462,122 @@ public class MainActivity extends Activity {
     }
 
 
+    private boolean isPrivateBuild() {
+        return getPackageName() != null && getPackageName().endsWith(".private");
+    }
+
+    private void clearPendingMigrationPassphrase() {
+        if (pendingMigrationPassphrase != null) java.util.Arrays.fill(pendingMigrationPassphrase, '\0');
+        pendingMigrationPassphrase = null;
+    }
+
+    private void startPrivateMigrationExport() {
+        final String code = MigrationState.generateMigrationCode();
+        final EditText view = new EditText(this);
+        view.setSingleLine(true);
+        view.setText(code);
+        view.setSelectAllOnFocus(true);
+        view.setTextIsSelectable(true);
+        new AlertDialog.Builder(this)
+                .setTitle("迁移码")
+                .setMessage("先复制保存这串 20 位迁移码。它只用于解密这一次迁移包，不会上传服务器；导入完成后可以丢掉。")
+                .setView(view)
+                .setNegativeButton("取消", null)
+                .setPositiveButton("复制并导出", (d, w) -> {
+                    try {
+                        android.content.ClipboardManager clipboard = (android.content.ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+                        if (clipboard != null) clipboard.setPrimaryClip(android.content.ClipData.newPlainText("掌心窗迁移码", code));
+                        clearPendingMigrationPassphrase();
+                        pendingMigrationPassphrase = code.toCharArray();
+                        Intent i = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                        i.setType("application/octet-stream");
+                        i.addCategory(Intent.CATEGORY_OPENABLE);
+                        i.putExtra(Intent.EXTRA_TITLE, "掌心窗私人迁移-" + new SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(new Date()) + ".lpm");
+                        startActivityForResult(i, REQ_PRIVATE_MIGRATION_EXPORT);
+                    } catch (Exception e) {
+                        clearPendingMigrationPassphrase();
+                        Toast.makeText(this, "系统文件管理器没有接住迁移导出", Toast.LENGTH_LONG).show();
+                    }
+                }).show();
+    }
+
+    private void choosePrivateMigrationImport() {
+        try {
+            Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+            i.setType("*/*");
+            i.addCategory(Intent.CATEGORY_OPENABLE);
+            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            startActivityForResult(i, REQ_PRIVATE_MIGRATION_IMPORT);
+        } catch (Exception e) {
+            Toast.makeText(this, "系统文件管理器没有接住迁移导入", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exportPrivateMigrationTo(Uri uri) {
+        char[] code = pendingMigrationPassphrase;
+        if (code == null || code.length == 0) {
+            Toast.makeText(this, "迁移码已失效，请重新导出", Toast.LENGTH_LONG).show();
+            return;
+        }
+        try (OutputStream output = getContentResolver().openOutputStream(uri, "wt")) {
+            if (output == null) throw new IllegalStateException("output_unavailable");
+            String encrypted = MigrationState.exportEncrypted(this, code);
+            output.write(encrypted.getBytes(StandardCharsets.UTF_8));
+            output.flush();
+            Toast.makeText(this, "加密迁移包已导出；旧版先保留，不要卸载", Toast.LENGTH_LONG).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "迁移导出失败：" + ScreenshotService.shortMsg(e), Toast.LENGTH_LONG).show();
+        } finally {
+            clearPendingMigrationPassphrase();
+        }
+    }
+
+    private void readPrivateMigrationAndAskCode(Uri uri) {
+        try (InputStream input = getContentResolver().openInputStream(uri); ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
+            if (input == null) throw new IllegalStateException("input_unavailable");
+            byte[] buffer = new byte[8192];
+            int n;
+            while ((n = input.read(buffer)) >= 0) {
+                bytes.write(buffer, 0, n);
+                if (bytes.size() > 32 * 1024 * 1024) throw new IllegalStateException("migration_too_large");
+            }
+            final String encrypted = new String(bytes.toByteArray(), StandardCharsets.UTF_8).trim();
+            final EditText codeInput = new EditText(this);
+            codeInput.setHint("粘贴 20 位迁移码");
+            codeInput.setSingleLine(true);
+            codeInput.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
+            AlertDialog dialog = new AlertDialog.Builder(this)
+                    .setTitle("导入私人迁移包")
+                    .setMessage("导入会合并日记，并写入迁移包里的稳定设置；不会自动授予无障碍、通知、定位等 Android 系统权限。")
+                    .setView(codeInput)
+                    .setNegativeButton("取消", null)
+                    .setPositiveButton("解密并导入", null)
+                    .create();
+            dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                char[] code = codeInput.getText().toString().trim().toCharArray();
+                try {
+                    JSONObject result = MigrationState.importEncrypted(this, encrypted, code);
+                    JSONObject summary = result.optJSONObject("summary");
+                    String detail = summary == null ? "" :
+                            "\n日记 " + summary.optInt("diary_entries", 0) +
+                            " 篇 · 钱包记录 " + summary.optInt("wallet_records", 0) +
+                            " 条 · 日历 " + summary.optInt("calendar_events", 0) + " 条";
+                    dialog.dismiss();
+                    Toast.makeText(this, "迁移导入完成" + detail + "\n接下来请重新授予需要的系统权限。", Toast.LENGTH_LONG).show();
+                    updateUI();
+                } catch (Exception error) {
+                    Toast.makeText(this, "无法导入：迁移码不对、文件损坏，或版本不兼容。", Toast.LENGTH_LONG).show();
+                } finally {
+                    java.util.Arrays.fill(code, '\0');
+                    codeInput.setText("");
+                }
+            }));
+            dialog.show();
+        } catch (Exception e) {
+            Toast.makeText(this, "读取迁移包失败：" + ScreenshotService.shortMsg(e), Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void chooseGuidianAvatar() {
         try {
             Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -2502,6 +2638,9 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "日记本封面已换好", Toast.LENGTH_SHORT).show(); showDiaryHomePage();
         } else if (requestCode == REQ_DIARY_EXPORT && resultCode == RESULT_OK && data != null && data.getData() != null) exportDiaryTo(data.getData());
         else if (requestCode == REQ_DIARY_IMPORT && resultCode == RESULT_OK && data != null && data.getData() != null) importDiaryFrom(data.getData());
+        else if (requestCode == REQ_PRIVATE_MIGRATION_EXPORT && resultCode == RESULT_OK && data != null && data.getData() != null) exportPrivateMigrationTo(data.getData());
+        else if (requestCode == REQ_PRIVATE_MIGRATION_IMPORT && resultCode == RESULT_OK && data != null && data.getData() != null) readPrivateMigrationAndAskCode(data.getData());
+        else if (requestCode == REQ_PRIVATE_MIGRATION_EXPORT) clearPendingMigrationPassphrase();
     }
 
     private void startCompanionService() {
@@ -2611,6 +2750,14 @@ public class MainActivity extends Activity {
     private void testLocalSequence() { boolean ok1 = CompanionService.showReminderNotification(this, "掌心窗连招测试", "先发悬浮横幅，再回目标 APP。日志会写清每一步。"); String result = CompanionService.openPackageResult(this, AppPrefs.homeTargetPackage(this)); DebugState.append(this, "本机连招测试：popup=" + ok1 + "；open=" + result); updateUI(); }
     private boolean openPackage(String pkg) { String result = CompanionService.openPackageResult(this, pkg); boolean ok = result.startsWith("opened_"); DebugState.append(this, "本机打开 App：" + result); Toast.makeText(this, ok ? "已尝试打开" : ("打开失败：" + result), Toast.LENGTH_SHORT).show(); updateUI(); return ok; }
     private void updateVersionUi() {
+        if (isPrivateBuild()) {
+            if (versionStatusText != null) versionStatusText.setText("当前版本：" + AppPrefs.APP_VERSION_NAME + "（私人版独立签名）");
+            if (updateChangelogText != null) updateChangelogText.setText("私人版不使用公开仓库 APK 更新通道。后续更新必须由同一枚私人签名密钥签名。");
+            if (licenseSummaryText != null) licenseSummaryText.setText("私人版与公开版使用不同 Android 包身份和不同签名；公开版签名不能覆盖私人版。");
+            if (checkUpdateButton != null) checkUpdateButton.setEnabled(false);
+            if (downloadUpdateButton != null) downloadUpdateButton.setEnabled(false);
+            return;
+        }
         boolean hasNew = latestVersionCode > AppPrefs.APP_VERSION_CODE;
         if (versionStatusText != null) {
             versionStatusText.setText("当前版本：" + AppPrefs.APP_VERSION_NAME + "（" + AppPrefs.APP_VERSION_CODE + "）\n" +
@@ -2622,6 +2769,11 @@ public class MainActivity extends Activity {
     }
 
     private void checkForUpdates(boolean manual) {
+        if (isPrivateBuild()) {
+            if (manual) Toast.makeText(this, "私人版不使用公开 APK 更新通道", Toast.LENGTH_SHORT).show();
+            updateVersionUi();
+            return;
+        }
         new Thread(() -> {
             HttpURLConnection connection = null;
             try {
@@ -2652,6 +2804,7 @@ public class MainActivity extends Activity {
     }
 
     private void downloadLatestApk() {
+        if (isPrivateBuild()) { Toast.makeText(this, "私人版只接受私人签名更新", Toast.LENGTH_SHORT).show(); return; }
         if (latestApkUrl.isEmpty()) { Toast.makeText(this, "请先检查更新", Toast.LENGTH_SHORT).show(); return; }
         try { startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(latestApkUrl))); }
         catch (Exception e) { Toast.makeText(this, "无法打开下载地址", Toast.LENGTH_SHORT).show(); }

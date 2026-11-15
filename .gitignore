@@ -40,3 +40,11 @@ observer/workflow-codex-state.json
 observer/workflow-watcher-state.json
 observer/.workflow-codex-runner.lock
 observer/.workflow-inbox-forward.lock
+
+# Signing secrets (never commit new private signing identities)
+*.jks
+*.keystore
+*.p12
+android/private-signing/
+android/build-private/
+*.idsig
