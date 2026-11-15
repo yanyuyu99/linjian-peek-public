@@ -8,6 +8,14 @@ PLATFORM=$ANDROID_HOME/platforms/android-34/android.jar
 BUILD_TOOLS=$ANDROID_HOME/build-tools/34.0.0
 
 PROJECT="$(cd "$(dirname "$0")" && pwd)"
+
+# The repository's legacy workflow is explicitly a Debug APK workflow.
+# In that one CI context only, route to the isolated debug package/signing path.
+# All other invocations remain release builds and fail closed without external secrets.
+if [ "${GITHUB_ACTIONS:-}" = "true" ] && [ "${GITHUB_WORKFLOW:-}" = "Build Android Debug APK" ]; then
+    exec bash "$PROJECT/build-debug.sh"
+fi
+
 SRC=$PROJECT/app/src/main
 OUT=$PROJECT/build
 PKG_PATH=dev/linjian/peek
