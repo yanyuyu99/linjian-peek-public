@@ -12,7 +12,7 @@ SRC=$PROJECT/app/src/main
 MANIFEST=$PROJECT/private/AndroidManifest.xml
 OUT=$PROJECT/build-private
 PKG_PATH=dev/linjian/peek
-OUTPUT=$PROJECT/Zhangxinchuang-private-v0.3.14.1.apk
+OUTPUT=$PROJECT/Zhangxinchuang-private-v0.3.14.1-private2.apk
 EXPECTED_CERT_FILE=$PROJECT/private/EXPECTED_CERT_SHA256.txt
 
 if [ -z "$PRIVATE_KS" ]; then echo "Set PRIVATE_KS to the private PKCS12 keystore path"; exit 1; fi

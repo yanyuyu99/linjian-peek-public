@@ -2,8 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     package="dev.linjian.peek.private"
-    android:versionCode="31401"
-    android:versionName="0.3.14.1">
+    android:versionCode="31402"
+    android:versionName="0.3.14.1-private2">
 
     <uses-sdk android:minSdkVersion="23" android:targetSdkVersion="34" />
 
@@ -118,7 +118,7 @@
 
         <service
             android:name="dev.linjian.peek.ScreenshotService"
-            android:label="@string/accessibility_name"
+            android:label="掌心窗 · 私人版服务"
             android:exported="true"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>
