@@ -49,7 +49,7 @@ zip -j app.tmp.apk classes.dex
 mv app.tmp.apk app.unsigned.apk
 
 echo "=== Loading fixed PUBLIC signing key ==="
-PUBLIC_KS=$PROJECT/signing/zhangxinchuang-public-release.p12
+if [ -z "$PUBLIC_KS" ]; then echo "Set PUBLIC_KS to an external legacy public-release PKCS12 keystore path"; exit 1; fi
 if [ -z "$PUBLIC_KS_PASSWORD" ]; then echo "Set PUBLIC_KS_PASSWORD in the environment; no built-in fallback exists"; exit 1; fi
 if [ ! -f "$PUBLIC_KS" ]; then
     echo "Public release keystore not found: $PUBLIC_KS"

@@ -48,3 +48,4 @@ observer/.workflow-inbox-forward.lock
 android/private-signing/
 android/build-private/
 *.idsig
+android/build-debug/
