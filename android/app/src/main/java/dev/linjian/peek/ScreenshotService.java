@@ -40,11 +40,21 @@ public class ScreenshotService extends AccessibilityService {
     private HandlerThread backgroundPollThread;
     private Handler backgroundPollHandler;
 
+    private static volatile String lastScreenshotStatus = "never_requested";
+    private static volatile long lastScreenshotAtMs = 0L;
+
     public static ScreenshotService getInstance() { return instance; }
     public static boolean ready() { return instance != null; }
     public static String currentPackage() { return currentPackage == null ? "" : currentPackage; }
     public static String screenText() { return screenText == null ? "" : screenText; }
     public static String screenNodesJson() { return screenNodesJson == null ? "[]" : screenNodesJson; }
+    public static String screenshotStatus() { return lastScreenshotStatus == null ? "" : lastScreenshotStatus; }
+    public static long screenshotStatusAtMs() { return lastScreenshotAtMs; }
+
+    private static void markScreenshotStatus(String status) {
+        lastScreenshotStatus = status == null ? "" : status;
+        lastScreenshotAtMs = System.currentTimeMillis();
+    }
 
     private final Runnable watchdogTick = new Runnable() {
         @Override public void run() {
@@ -341,32 +351,56 @@ public class ScreenshotService extends AccessibilityService {
     }
 
     public void doScreenshot(String serverUrl, String token) {
-        if (Build.VERSION.SDK_INT < 30) { DebugState.append(this, "截图失败：Android 版本低于 11"); return; }
+        if (Build.VERSION.SDK_INT < 30) {
+            markScreenshotStatus("unsupported_android_lt_11");
+            DebugState.append(this, "截图失败：Android 版本低于 11");
+            return;
+        }
         final String finalUrl = normalizeUrl(serverUrl);
+        markScreenshotStatus("requesting_system_screenshot");
         DebugState.append(this, "开始调用系统截图 API");
         takeScreenshot(Display.DEFAULT_DISPLAY, executor, new TakeScreenshotCallback() {
             @Override public void onSuccess(ScreenshotResult result) {
                 try {
+                    markScreenshotStatus("system_screenshot_ok_encoding");
                     DebugState.append(ScreenshotService.this, "系统截图成功，开始编码");
                     Bitmap hardwareBitmap = Bitmap.wrapHardwareBuffer(result.getHardwareBuffer(), result.getColorSpace());
-                    if (hardwareBitmap == null) { DebugState.append(ScreenshotService.this, "截图失败：Bitmap 为空"); return; }
+                    if (hardwareBitmap == null) {
+                        markScreenshotStatus("bitmap_null");
+                        DebugState.append(ScreenshotService.this, "截图失败：Bitmap 为空");
+                        return;
+                    }
                     Bitmap bitmap = hardwareBitmap.copy(Bitmap.Config.ARGB_8888, false);
                     hardwareBitmap.recycle(); result.getHardwareBuffer().close();
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out); bitmap.recycle();
                     byte[] data = out.toByteArray();
                     DebugState.append(ScreenshotService.this, "截图编码完成：" + data.length + " bytes");
-                    if (data.length > 100) uploadScreenshot(data, finalUrl, token); else DebugState.append(ScreenshotService.this, "上传取消：截图数据太小");
-                } catch (Exception e) { DebugState.append(ScreenshotService.this, "截图处理异常：" + shortMsg(e)); }
+                    if (data.length > 100) {
+                        markScreenshotStatus("encoded_" + data.length + "_bytes_uploading");
+                        uploadScreenshot(data, finalUrl, token);
+                    } else {
+                        markScreenshotStatus("encoded_too_small_" + data.length);
+                        DebugState.append(ScreenshotService.this, "上传取消：截图数据太小");
+                    }
+                } catch (Exception e) {
+                    markScreenshotStatus("processing_exception:" + shortMsg(e));
+                    DebugState.append(ScreenshotService.this, "截图处理异常：" + shortMsg(e));
+                }
             }
-            @Override public void onFailure(int errorCode) { DebugState.append(ScreenshotService.this, "系统截图失败：errorCode=" + errorCode + "（可尝试关闭再开启无障碍）"); }
+            @Override public void onFailure(int errorCode) {
+                markScreenshotStatus("system_screenshot_failed_error_" + errorCode);
+                DebugState.append(ScreenshotService.this, "系统截图失败：errorCode=" + errorCode + "（可尝试关闭再开启无障碍）");
+            }
         });
     }
 
     private void uploadScreenshot(byte[] data, String serverUrl, String token) {
+        HttpURLConnection conn = null;
         try {
+            markScreenshotStatus("uploading");
             DebugState.append(this, "开始上传截图到 /api/screenshot");
-            HttpURLConnection conn = (HttpURLConnection) new URL(serverUrl + "/api/screenshot").openConnection();
+            conn = (HttpURLConnection) new URL(serverUrl + "/api/screenshot").openConnection();
             conn.setRequestMethod("POST"); conn.setDoOutput(true);
             conn.setRequestProperty("X-Auth-Token", token);
             conn.setRequestProperty("Content-Type", "image/jpeg");
@@ -374,10 +408,19 @@ public class ScreenshotService extends AccessibilityService {
             conn.setConnectTimeout(15000); conn.setReadTimeout(30000);
             OutputStream os = conn.getOutputStream(); os.write(data); os.flush(); os.close();
             int code = conn.getResponseCode(); String body = readBody(conn, code);
-            if (code >= 200 && code < 300) DebugState.append(this, "上传成功：HTTP " + code + " " + clip(body));
-            else DebugState.append(this, "上传失败：HTTP " + code + " " + clip(body));
-            conn.disconnect();
-        } catch (Exception e) { DebugState.append(this, "上传异常：" + shortMsg(e)); }
+            if (code >= 200 && code < 300) {
+                markScreenshotStatus("upload_ok_http_" + code);
+                DebugState.append(this, "上传成功：HTTP " + code + " " + clip(body));
+            } else {
+                markScreenshotStatus("upload_failed_http_" + code);
+                DebugState.append(this, "上传失败：HTTP " + code + " " + clip(body));
+            }
+        } catch (Exception e) {
+            markScreenshotStatus("upload_exception:" + shortMsg(e));
+            DebugState.append(this, "上传异常：" + shortMsg(e));
+        } finally {
+            if (conn != null) conn.disconnect();
+        }
     }
 
     public static String normalizeUrl(String url) { if (url == null) return ""; url = url.trim(); while (url.endsWith("/")) url = url.substring(0, url.length() - 1); return url; }

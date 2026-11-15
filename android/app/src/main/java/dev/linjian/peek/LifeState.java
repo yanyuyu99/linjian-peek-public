@@ -65,7 +65,8 @@ public class LifeState {
             SharedPreferencesCompat prefs = new SharedPreferencesCompat(ctx);
 
             state.put("device_id", AppPrefs.device(ctx));
-            state.put("life_state_version", "0.3.14");
+            state.put("life_state_version", AppPrefs.APP_VERSION_NAME);
+            state.put("app_package", ctx.getPackageName());
             state.put("local_time", formatLocal(now, "HH:mm"));
             state.put("local_date", formatLocal(now, "yyyy-MM-dd"));
             state.put("timezone", TimeZone.getDefault().getID());
@@ -79,6 +80,10 @@ public class LifeState {
             state.put("current_package", currentPackage);
             state.put("current_app", currentApp);
             state.put("accessibility_ready", ScreenshotService.ready());
+            JSONObject screenshotState = new JSONObject();
+            screenshotState.put("status", ScreenshotService.screenshotStatus());
+            screenshotState.put("updated_at_ms", ScreenshotService.screenshotStatusAtMs());
+            state.put("screenshot_state", screenshotState);
             state.put("usage_permission_ready", usageReady);
             state.put("screen_time_today_minutes", usage.screenTimeMinutes);
             state.put("unlock_count_today", usage.unlockCount);
