@@ -39,6 +39,8 @@ public class GuidianState {
     public static final String KEY_LAST_PROMPT_AT = "guidian_last_prompt_at";
     public static final String KEY_LAST_REJECT_AT = "guidian_last_reject_at";
     public static final String KEY_LAST_REJECT_REASON = "guidian_last_reject_reason";
+    public static final String KEY_LAST_MISSED_AT = "guidian_last_missed_at";
+    public static final String KEY_LAST_MISSED_REASON = "guidian_last_missed_reason";
     public static final String KEY_TODAY_DATE = "guidian_today_date";
     public static final String KEY_TODAY_COUNT = "guidian_today_count";
     public static final String KEY_LAST_PROMPT_TEXT = "guidian_last_prompt_text";
@@ -97,6 +99,10 @@ public class GuidianState {
             o.put("last_reject_at_ms", rejectAt);
             o.put("last_reject_at", rejectAt <= 0 ? "" : fmt(rejectAt));
             o.put("last_reject_reason", p.getString(KEY_LAST_REJECT_REASON, ""));
+            long missedAt = p.getLong(KEY_LAST_MISSED_AT, 0);
+            o.put("last_missed_at_ms", missedAt);
+            o.put("last_missed_at", missedAt <= 0 ? "" : fmt(missedAt));
+            o.put("last_missed_reason", p.getString(KEY_LAST_MISSED_REASON, ""));
             o.put("next_prompt_after_ms", next);
             o.put("next_prompt_after", fmt(next));
             o.put("in_quiet_time", inQuietTime(ctx, now));
@@ -136,6 +142,8 @@ public class GuidianState {
         sb.append("下次最早：").append(o.optString("next_prompt_after", "-")).append("\n");
         String reason = o.optString("last_reject_reason", "");
         if (reason.length() > 0) sb.append("最近拒绝理由：").append(reason).append("\n");
+        String missed = o.optString("last_missed_at", "");
+        if (missed.length() > 0) sb.append("最近未接：").append(missed).append("\n");
         String skip = o.optString("last_skip_reason", "");
         if (skip.length() > 0) sb.append("最近自动检查：").append(skip).append("\n");
         String auto = o.optString("last_auto_check_at", "");
@@ -172,6 +180,7 @@ public class GuidianState {
                 .putLong(KEY_LAST_RETURN_AT, now)
                 .putString(KEY_LAST_RETURN_SOURCE, source == null ? "unknown" : source)
                 .apply();
+        dismissNotification(ctx);
         DebugState.append(ctx, "归电已记录回来：" + (source == null ? "unknown" : source));
         if (!"target_foreground".equals(source))
             ActivityEventStore.recordPhone(ctx, "guidian_return", "回应归电", source == null ? "" : source);
@@ -183,8 +192,28 @@ public class GuidianState {
                 .putLong(KEY_LAST_REJECT_AT, now)
                 .putString(KEY_LAST_REJECT_REASON, reason == null ? "" : reason.trim())
                 .apply();
+        dismissNotification(ctx);
         DebugState.append(ctx, "归电已拒绝：" + (reason == null ? "" : reason.trim()));
         ActivityEventStore.recordPhone(ctx, "guidian_reject", "稍后回应归电", reason == null ? "" : reason.trim());
+    }
+
+    public static void markMissed(Context ctx, String reason) {
+        long now = System.currentTimeMillis();
+        String value = reason == null ? "" : reason.trim();
+        prefs(ctx).edit()
+                .putLong(KEY_LAST_MISSED_AT, now)
+                .putString(KEY_LAST_MISSED_REASON, value)
+                .apply();
+        dismissNotification(ctx);
+        DebugState.append(ctx, "归电未接：" + value);
+        ActivityEventStore.recordPhone(ctx, "guidian_missed", "归电未接", value);
+    }
+
+    public static void dismissNotification(Context ctx) {
+        try {
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) nm.cancel(NOTIFICATION_ID);
+        } catch (Exception ignored) { }
     }
 
     public static void evaluate(Context ctx, JSONObject state) {

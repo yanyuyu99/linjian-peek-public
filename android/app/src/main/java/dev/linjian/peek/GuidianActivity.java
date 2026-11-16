@@ -31,7 +31,10 @@ import android.widget.Toast;
 
 /** 归电的沉浸式来电页；只调整展示，不改变归电判断与记录逻辑。 */
 public class GuidianActivity extends Activity {
+    private static final long UNANSWERED_TIMEOUT_MS = 45_000L;
+
     private final Handler handler = new Handler(Looper.getMainLooper());
+    private final Runnable unansweredTimeout = this::handleUnansweredTimeout;
     private FrameLayout root;
     private LinearLayout reasonDrawer;
     private GuidianTheme theme;
@@ -57,6 +60,7 @@ public class GuidianActivity extends Activity {
         theme = GuidianTheme.from(GuidianState.themeName(this));
         applySystemBars();
         buildUi(getIntent() == null ? "" : getIntent().getStringExtra("prompt"));
+        scheduleUnansweredTimeout();
     }
 
     private void applySystemBars() {
@@ -246,6 +250,9 @@ public class GuidianActivity extends Activity {
     private void acceptCall() {
         if (connected) return;
         connected = true;
+        cancelUnansweredTimeout();
+        GuidianState.dismissNotification(this);
+        releaseIncomingWindowFlags();
         rejectButton.setEnabled(false);
         acceptButton.setEnabled(false);
         if (rejectButton.getParent() instanceof View) ((View) rejectButton.getParent()).setEnabled(false);
@@ -365,17 +372,60 @@ public class GuidianActivity extends Activity {
     }
 
     private void submitReason(String reason) {
+        cancelUnansweredTimeout();
+        GuidianState.dismissNotification(this);
+        releaseIncomingWindowFlags();
         GuidianState.reject(this, reason);
         Toast.makeText(this, "好，" + AppPrefs.companionName(this) + "晚点再来", Toast.LENGTH_SHORT).show();
         finish();
     }
 
+    @Override public void onUserInteraction() {
+        super.onUserInteraction();
+        if (!connected) scheduleUnansweredTimeout();
+    }
+
     @Override public void onBackPressed() {
-        if (reasonDrawer != null) hideReasonDrawer();
-        else super.onBackPressed();
+        if (reasonDrawer != null) {
+            hideReasonDrawer();
+            scheduleUnansweredTimeout();
+        } else {
+            cancelUnansweredTimeout();
+            GuidianState.dismissNotification(this);
+            releaseIncomingWindowFlags();
+            super.onBackPressed();
+        }
+    }
+
+    private void scheduleUnansweredTimeout() {
+        handler.removeCallbacks(unansweredTimeout);
+        if (!connected && !isFinishing()) handler.postDelayed(unansweredTimeout, UNANSWERED_TIMEOUT_MS);
+    }
+
+    private void cancelUnansweredTimeout() {
+        handler.removeCallbacks(unansweredTimeout);
+    }
+
+    private void handleUnansweredTimeout() {
+        if (connected || isFinishing()) return;
+        GuidianState.markMissed(this, "timeout");
+        GuidianState.dismissNotification(this);
+        releaseIncomingWindowFlags();
+        finish();
+    }
+
+    private void releaseIncomingWindowFlags() {
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
+                | WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED);
+        if (Build.VERSION.SDK_INT >= 27) {
+            setShowWhenLocked(false);
+            setTurnScreenOn(false);
+        }
     }
 
     @Override protected void onDestroy() {
+        cancelUnansweredTimeout();
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
     }

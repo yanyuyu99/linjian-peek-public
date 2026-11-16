@@ -1,6 +1,15 @@
-# 掌心窗公开版 v0.3.10
+# 掌心窗公开版
 
-[下载 Android APK（v0.3.10）](https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.10/Zhangxinchuang-public-v0.3.10.apk) · [查看 GitHub Release](https://github.com/yanyuyu99/linjian-peek-public/releases/tag/v0.3.10)
+## v0.3.14.3 · 归电无人接听自动结束
+
+- 修复归电全屏页无人接听时因 `FLAG_KEEP_SCREEN_ON` 一直保持亮屏的问题。
+- 默认 45 秒无操作判定为“未接”；触摸、按键、打开“稍后”理由面板或输入内容都会重新计时。
+- 未接后自动关闭归电页和归电通知，并释放 keep-screen-on / turn-screen-on / show-when-locked；不强制锁屏，交还系统原有息屏策略。
+- 接通、稍后、返回都会取消未接计时并清理归电通知。
+- 新增未接记录 `guidian_missed`，归电状态页可看到最近未接时间。
+- 构建脚本固定使用 JDK 17，避免 Android build-tools 34.0.0 的旧 D8 在 JDK 21 下内部崩溃。
+
+[下载 Android APK（v0.3.14.3）](https://github.com/yanyuyu99/linjian-peek-public/releases/download/v0.3.14.3-yanyu/Zhangxinchuang-public-v0.3.14.3.apk) · [查看 GitHub Release](https://github.com/yanyuyu99/linjian-peek-public/releases/tag/v0.3.14.3-yanyu)
 
 ## v0.3.10 看见回复、闹钟铃声与 Workflow 闭环
 
