@@ -119,6 +119,10 @@ public class MainActivity extends Activity {
     private boolean guardianCalendarDetailOpen = false;
     private boolean diaryPageOpen = false, diaryContentOpen = false;
     private String diaryBookId = "", diarySelectedDate = "", diaryCurrentEntryId = "";
+    private static final String DIARY_PAPER_TAG_PREFIX = "diary_paper:";
+    private int diaryContentScrollY = 0, diaryScrollAnchorOffset = 0;
+    private String diaryScrollAnchorEntryId = "";
+    private boolean diaryScrollRestorePending = false;
     private View diaryExpandedPaperView;
     private TextView diaryExpandedContentView, diaryExpandedHintView;
     private FrameLayout diaryDateDrawerOverlay;
@@ -230,6 +234,11 @@ public class MainActivity extends Activity {
         guidianEnabled = findViewById(R.id.guidianEnabled); guidianRemoteEnabled = findViewById(R.id.guidianRemoteEnabled); guidianFullscreenEnabled = findViewById(R.id.guidianFullscreenEnabled); guidianQuietEnabled = findViewById(R.id.guidianQuietEnabled); calendarLunarEnabled = findViewById(R.id.calendarLunarEnabled); calendarRepeatEnabled = findViewById(R.id.calendarRepeatEnabled); calendarBannerEnabled = findViewById(R.id.calendarBannerEnabled);
         tabSettings = findViewById(R.id.tabSettings); tabSee = findViewById(R.id.tabSee); tabControl = findViewById(R.id.tabControl); tabLife = findViewById(R.id.tabLife); tabGate = findViewById(R.id.tabGate); tabDebug = findViewById(R.id.tabDebug); quickSeeButton = findViewById(R.id.quickSeeButton); quickGuardButton = findViewById(R.id.quickGuardButton);
         sectionSettings = findViewById(R.id.sectionSettings); sectionSee = findViewById(R.id.sectionSee); sectionControl = findViewById(R.id.sectionControl); sectionLife = findViewById(R.id.sectionLife); sectionGate = findViewById(R.id.sectionGate); sectionDebug = findViewById(R.id.sectionDebug);
+        if (sectionSee instanceof ScrollView) {
+            ((ScrollView) sectionSee).setOnScrollChangeListener((v, scrollX, scrollY, oldScrollX, oldScrollY) -> {
+                if (diaryPageOpen && diaryContentOpen && !diaryScrollRestorePending) updateDiaryScrollMemoryFromViewport();
+            });
+        }
         heroCard = findViewById(R.id.heroCard); bottomNav = findViewById(R.id.bottomNav);
         drawerTheme = findViewById(R.id.drawerTheme); drawerNowState = findViewById(R.id.drawerNowState); drawerConnection = findViewById(R.id.drawerConnection); drawerPermission = findViewById(R.id.drawerPermission); drawerControlTest = findViewById(R.id.drawerControlTest); drawerKnownApps = findViewById(R.id.drawerKnownApps); drawerHomeMode = findViewById(R.id.drawerHomeMode); drawerGateAdd = findViewById(R.id.drawerGateAdd); drawerReminder = findViewById(R.id.drawerReminder); drawerCycle = findViewById(R.id.drawerCycle); drawerDebug = findViewById(R.id.drawerDebug); drawerAppGate = findViewById(R.id.drawerAppGate); drawerWeather = findViewById(R.id.drawerWeather); drawerVersion = findViewById(R.id.drawerVersion);
         drawerGuidian = findViewById(R.id.drawerGuidian); drawerGuidianSettings = findViewById(R.id.drawerGuidianSettings); drawerCalendar = findViewById(R.id.drawerCalendar);
@@ -637,6 +646,7 @@ public class MainActivity extends Activity {
             create.setOnClickListener(v -> {
                 JSONObject made = DiaryState.createBook(this, AppPrefs.companionName(this) + "的日记", "把今天轻轻藏起来", DiaryState.DEFAULT_COVER);
                 diaryBookId = made.optString("book_id", "");
+                clearDiaryScrollMemory();
                 showDiaryHomePage();
             });
             empty.addView(create, matchWrapTop(16));
@@ -649,7 +659,7 @@ public class MainActivity extends Activity {
                     JSONObject choice = books.optJSONObject(i); if (choice == null) continue;
                     TextView chip = label(choice.optString("name", "日记本"), 8);
                     chip.setPadding(dp(9), dp(5), dp(9), dp(5)); chip.setBackground(UITheme.current(this).soft(14));
-                    chip.setOnClickListener(v -> { diaryBookId = choice.optString("id", ""); showDiaryHomePage(); });
+                    chip.setOnClickListener(v -> { diaryBookId = choice.optString("id", ""); clearDiaryScrollMemory(); showDiaryHomePage(); });
                     LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT); lp.rightMargin = dp(6); chooser.addView(chip, lp);
                 }
                 root.addView(chooser, marginBottom(10));
@@ -736,8 +746,10 @@ public class MainActivity extends Activity {
         cover.setCameraDistance(dp(1200));
         cover.animate().rotationY(-82f).alpha(.18f).scaleX(.92f).setDuration(260).withEndAction(() -> {
             diaryContentOpen = true; diarySelectedDate = ""; diaryCurrentEntryId = "";
+            diaryScrollRestorePending = true;
             replaceScrollContent(sectionSee, buildDiaryContentPage(null)); updateHeader("see");
             sectionSee.setRotationY(8f); sectionSee.setAlpha(.25f); sectionSee.animate().rotationY(0f).alpha(1f).setDuration(250).start();
+            restoreDiaryScrollPosition(diaryScrollAnchorEntryId, diaryScrollAnchorOffset, diaryContentScrollY);
         }).start();
     }
 
@@ -793,6 +805,7 @@ public class MainActivity extends Activity {
 
     private void showAllDiaryPages() {
         diarySelectedDate = ""; diaryCurrentEntryId = "";
+        clearDiaryScrollMemory();
         replaceScrollContent(sectionSee, buildDiaryContentPage(null)); animateDiaryPageSwap();
     }
 
@@ -803,13 +816,79 @@ public class MainActivity extends Activity {
     private void showDiaryDatePage(String date, String preferredEntryId) {
         diarySelectedDate = date == null ? "" : date;
         diaryCurrentEntryId = preferredEntryId == null ? "" : preferredEntryId;
-        replaceScrollContent(sectionSee, buildDiaryContentPage(null)); animateDiaryPageSwap();
+        if (!diaryCurrentEntryId.isEmpty()) {
+            diaryScrollRestorePending = true;
+            replaceScrollContent(sectionSee, buildDiaryContentPage(null));
+            animateDiaryPageSwap(false);
+            restoreDiaryScrollPosition(diaryCurrentEntryId, dp(12), 0);
+        } else {
+            clearDiaryScrollMemory();
+            replaceScrollContent(sectionSee, buildDiaryContentPage(null));
+            animateDiaryPageSwap();
+        }
     }
 
-    private void animateDiaryPageSwap() {
+    private void animateDiaryPageSwap() { animateDiaryPageSwap(true); }
+
+    private void animateDiaryPageSwap(boolean resetScroll) {
         if (sectionSee == null) return;
-        sectionSee.scrollTo(0, 0); sectionSee.setAlpha(.3f); sectionSee.setTranslationX(dp(18));
+        if (resetScroll) sectionSee.scrollTo(0, 0);
+        sectionSee.setAlpha(.3f); sectionSee.setTranslationX(dp(18));
         sectionSee.animate().alpha(1f).translationX(0f).setDuration(220).start();
+    }
+
+    private void clearDiaryScrollMemory() {
+        diaryContentScrollY = 0;
+        diaryScrollAnchorEntryId = "";
+        diaryScrollAnchorOffset = 0;
+        diaryScrollRestorePending = false;
+    }
+
+    private void captureDiaryScrollPosition(View anchor, String entryId) {
+        if (!(sectionSee instanceof ScrollView)) return;
+        ScrollView scroll = (ScrollView) sectionSee;
+        diaryContentScrollY = scroll.getScrollY();
+        diaryScrollAnchorEntryId = entryId == null ? "" : entryId;
+        diaryScrollAnchorOffset = anchor == null ? 0 : anchor.getTop() - diaryContentScrollY;
+    }
+
+    private void updateDiaryScrollMemoryFromViewport() {
+        if (!(sectionSee instanceof ScrollView)) return;
+        ScrollView scroll = (ScrollView) sectionSee;
+        diaryContentScrollY = scroll.getScrollY();
+        LinearLayout root = scrollColumn(sectionSee);
+        if (root == null) return;
+        for (int i = 0; i < root.getChildCount(); i++) {
+            View child = root.getChildAt(i);
+            Object tag = child.getTag();
+            if (!(tag instanceof String)) continue;
+            String value = (String) tag;
+            if (!value.startsWith(DIARY_PAPER_TAG_PREFIX)) continue;
+            if (child.getBottom() < diaryContentScrollY) continue;
+            diaryScrollAnchorEntryId = value.substring(DIARY_PAPER_TAG_PREFIX.length());
+            diaryScrollAnchorOffset = child.getTop() - diaryContentScrollY;
+            return;
+        }
+    }
+
+    private void restoreDiaryScrollPosition(String entryId, int viewportOffset, int fallbackScrollY) {
+        if (!(sectionSee instanceof ScrollView)) {
+            diaryScrollRestorePending = false;
+            return;
+        }
+        ScrollView scroll = (ScrollView) sectionSee;
+        final String targetId = entryId == null ? "" : entryId;
+        final int savedOffset = viewportOffset;
+        final int savedY = Math.max(0, fallbackScrollY);
+        scroll.post(() -> {
+            View target = targetId.isEmpty() ? null : scroll.findViewWithTag(DIARY_PAPER_TAG_PREFIX + targetId);
+            int y = target == null ? savedY : Math.max(0, target.getTop() - savedOffset);
+            scroll.scrollTo(0, y);
+            scroll.post(() -> {
+                diaryScrollRestorePending = false;
+                updateDiaryScrollMemoryFromViewport();
+            });
+        });
     }
 
     private void showDiaryDateDrawer() {
@@ -875,8 +954,9 @@ public class MainActivity extends Activity {
     }
 
     private View buildDiaryEntryPaper(JSONObject entry) {
-        LinearLayout paper = new LinearLayout(this); paper.setTag("diary_paper"); paper.setOrientation(LinearLayout.VERTICAL); paper.setPadding(dp(20), dp(18), dp(20), dp(20)); paper.setBackground(new DiaryPaperDrawable()); paper.setElevation(dp(2));
+        LinearLayout paper = new LinearLayout(this); paper.setOrientation(LinearLayout.VERTICAL); paper.setPadding(dp(20), dp(18), dp(20), dp(20)); paper.setBackground(new DiaryPaperDrawable()); paper.setElevation(dp(2));
         String entryId = entry.optString("id", "");
+        paper.setTag(DIARY_PAPER_TAG_PREFIX + entryId);
         boolean current = entryId.equals(diaryCurrentEntryId);
         int annotationCount = DiaryState.annotationCount(this, entryId);
         LinearLayout meta = horizontal(); TextView time = label(entry.optString("time_label", entry.optString("created_at", "").length() >= 16 ? entry.optString("created_at").substring(11, 16) : ""), 8); time.setTextColor(Color.parseColor("#967584")); meta.addView(time, weightedWrap(1f, 0));
@@ -894,7 +974,14 @@ public class MainActivity extends Activity {
         String tags = diaryTagsText(entry.optJSONArray("tags")); if (!tags.isEmpty()) { TextView tagView = body(tags, 8); tagView.setTextColor(Color.parseColor("#A47788")); paper.addView(tagView, matchWrapTop(14)); }
         TextView expandHint = label(current ? "收起全文  ↑" : "点击展开全文  ↓", 8); expandHint.setTextColor(Color.parseColor("#A47788")); paper.addView(expandHint, matchWrapTop(11));
         paper.setContentDescription(current ? "点击收起这篇日记" : "点击展开这篇日记");
-        paper.setOnClickListener(v -> { diaryCurrentEntryId = current ? "" : entryId; replaceScrollContent(sectionSee, buildDiaryContentPage(null)); animateDiaryPageSwap(); });
+        paper.setOnClickListener(v -> {
+            captureDiaryScrollPosition(paper, entryId);
+            diaryScrollRestorePending = true;
+            diaryCurrentEntryId = current ? "" : entryId;
+            replaceScrollContent(sectionSee, buildDiaryContentPage(null));
+            animateDiaryPageSwap(false);
+            restoreDiaryScrollPosition(entryId, diaryScrollAnchorOffset, diaryContentScrollY);
+        });
         paper.setClickable(true); paper.setFocusable(true);
         return paper;
     }
